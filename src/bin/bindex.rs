@@ -42,7 +42,7 @@ fn compute_balance(
     index: &AddrIndex,
     history_limit: usize,
 ) -> Result<(), Error> {
-    if scripts.len() == 0 {
+    if scripts.is_empty() {
         return Ok(());
     }
     let t = std::time::Instant::now();
@@ -96,7 +96,6 @@ fn compute_balance(
                 "{}",
                 Utc.timestamp_opt(loc.indexed_header.header().time.into(), 0)
                     .unwrap()
-                    .to_string()
             ),
             height: loc.height.to_string(),
             offset: loc.offset.to_string(),
