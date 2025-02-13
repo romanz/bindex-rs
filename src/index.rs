@@ -107,7 +107,7 @@ impl<'a> IndexVisitor<'a> {
     }
 }
 
-impl<'a> bitcoin_slices::Visitor for IndexVisitor<'a> {
+impl bitcoin_slices::Visitor for IndexVisitor<'_> {
     fn visit_tx_out(&mut self, _vout: usize, tx_out: &bsl::TxOut) -> ControlFlow<()> {
         self.add(bitcoin::Script::from_bytes(tx_out.script_pubkey()));
         ControlFlow::Continue(())

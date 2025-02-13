@@ -59,7 +59,7 @@ impl AddrIndex {
     pub fn open(db_path: impl AsRef<Path>, url: impl Into<String>) -> Result<Self, Error> {
         let agent = ureq::Agent::new_with_config(
             ureq::config::Config::builder()
-                .max_response_header_size(usize::MAX)  // Disabled as a workaround
+                .max_response_header_size(usize::MAX) // Disabled as a workaround
                 .build(),
         );
         let client = client::Client::new(agent, url);
@@ -167,14 +167,14 @@ impl AddrIndex {
 
     pub fn find(&self, script: &bitcoin::Script) -> Result<Vec<Location>, Error> {
         let positions = self.store.scan(script)?;
-        Ok(positions
+        positions
             .into_iter()
             .map(|txpos| {
                 self.chain
                     .find_by_txpos(&txpos)
                     .ok_or_else(|| Error::InvalidPosition(txpos))
             })
-            .collect::<Result<Vec<Location>, Error>>()?)
+            .collect::<Result<Vec<Location>, Error>>()
     }
 
     pub fn get_tx_bytes(&self, location: &Location) -> Result<Vec<u8>, Error> {
