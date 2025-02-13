@@ -1,0 +1,39 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Install Rust
+      run: rustup component add rustfmt clippy
+
+    - name: Install other dependencies
+      run: sudo apt install build-essential libclang-dev
+
+    - name: Build
+      run: cargo build --all --locked
+
+    - name: Test
+      run: cargo test --all --locked
+
+    - name: Format
+      run: cargo fmt --all -- --check
+
+    - name: Clippy
+      run: cargo clippy -- -D warnings
