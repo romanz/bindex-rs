@@ -27,7 +27,7 @@ jobs:
       run: sudo apt install build-essential libclang-dev
 
     - name: Build
-      run: cargo build --all --locked
+      run: cargo build --all --locked --timings
 
     - name: Test
       run: cargo test --all --locked
@@ -37,3 +37,9 @@ jobs:
 
     - name: Clippy
       run: cargo clippy -- -D warnings
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: cargo-build-timings
+        path: target/cargo-timings/cargo-timing-*.html
+        retention-days: 30
