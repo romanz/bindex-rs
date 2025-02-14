@@ -12,7 +12,7 @@ https://github.com/bitcoin/bitcoin/compare/master...romanz:bitcoin:bindex
 ## Usage
 
 ```
-$ ~/src/bindex/run.sh bitcoin 1B89jkAQwfvZFJsKphKC1hnfRxRM1DCPL7
+$ ~/src/bindex/run.sh 1B89jkAQwfvZFJsKphKC1hnfRxRM1DCPL7
 + export RUST_LOG=info
 + RUST_LOG=info
 + cargo +stable build --release --all

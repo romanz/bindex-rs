@@ -154,7 +154,7 @@ enum Network {
 #[command(version, about, long_about = None)]
 /// Bitcoin address indexer
 struct Args {
-    #[arg(value_enum)]
+    #[arg(value_enum, short = 'n', long = "network", default_value_t = Network::Bitcoin)]
     network: Network,
 
     #[arg(short = 'l', long = "limit", default_value_t = 100)]
