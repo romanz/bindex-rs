@@ -1,0 +1,6 @@
+.*
+_*
+contrib
+/db*
+Dockerfile
+target

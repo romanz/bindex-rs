@@ -1,0 +1,27 @@
+FROM debian:trixie AS base
+
+# Prepare base image
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qqy
+RUN apt-get install -qqy librocksdb-dev
+
+# Prepare builder image
+FROM base AS builder
+RUN apt-get install -qqy cargo libclang-dev
+
+WORKDIR /build/
+COPY . .
+
+# Build with dynamically linked RocksDB library
+ENV ROCKSDB_INCLUDE_DIR=/usr/include
+ENV ROCKSDB_LIB_DIR=/usr/lib
+RUN cargo build --release --locked --all -v
+
+# Copy the binaries into runner image
+FROM base AS runner
+COPY --from=builder /build/target/release/bindex /usr/local/bin/bindex
+
+WORKDIR /
+
+# Sanity check
+RUN bindex --version
