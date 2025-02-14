@@ -1,4 +1,8 @@
-use bitcoin::{consensus::deserialize, BlockHash};
+use bitcoin::{
+    block::Header,
+    consensus::{deserialize, Decodable},
+    BlockHash,
+};
 use log::*;
 
 use crate::index;
@@ -23,11 +27,6 @@ pub struct Client {
     url: String,
 }
 
-#[derive(serde::Deserialize, Debug)]
-pub struct HeaderInfo {
-    pub hash: BlockHash,
-}
-
 impl Client {
     pub fn new<T: Into<String>>(agent: ureq::Agent, url: T) -> Self {
         Self {
@@ -37,8 +36,11 @@ impl Client {
     }
 
     fn get_bytes(&self, url: &str) -> Result<Vec<u8>, Error> {
-        let mut res = self.agent.get(url).call()?;
-        Ok(res.body_mut().read_to_vec()?)
+        let req = self.agent.get(url);
+        debug!("=> {:?}", req);
+        let res = req.call()?;
+        debug!("<= {:?}", res);
+        Ok(res.into_body().read_to_vec()?)
     }
 
     pub fn get_blockhash_by_height(&self, height: usize) -> Result<BlockHash, Error> {
@@ -47,30 +49,36 @@ impl Client {
         Ok(deserialize(&data)?)
     }
 
-    pub fn get_headers_info(
-        &self,
-        hash: BlockHash,
-        limit: usize,
-    ) -> Result<Vec<HeaderInfo>, Error> {
-        let url = format!("{}/rest/headers/{}/{}.json", self.url, limit, hash);
+    pub fn get_headers(&self, hash: BlockHash, limit: usize) -> Result<Vec<Header>, Error> {
+        let url = format!("{}/rest/headers/{}/{}.bin", self.url, limit + 1, hash);
         let data = self.get_bytes(&url)?;
-        Ok(serde_json::from_slice(&data)?)
+        assert_eq!(data.len() % Header::SIZE, 0);
+        let count = data.len() / Header::SIZE;
+
+        // the first header should correspond to `hash`
+        let mut headers = Vec::with_capacity(count);
+        let mut r = bitcoin::io::Cursor::new(data);
+        for _ in 0..count {
+            let header = Header::consensus_decode_from_finite_reader(&mut r)?;
+            headers.push(header);
+        }
+        Ok(headers)
     }
 
     pub fn get_block_bytes(&self, hash: BlockHash) -> Result<index::BlockBytes, Error> {
-        let data = self.get_bytes(&format!("{}/rest/block/{}.bin", self.url, hash))?;
+        let url = format!("{}/rest/block/{}.bin", self.url, hash);
+        let data = self.get_bytes(&url)?;
         Ok(index::BlockBytes::new(data))
     }
 
     pub fn get_spent_bytes(&self, hash: BlockHash) -> Result<index::SpentBytes, Error> {
-        let data = self.get_bytes(&format!("{}/rest/spentoutputs/{}.bin", self.url, hash))?;
+        let url = format!("{}/rest/spentoutputs/{}.bin", self.url, hash);
+        let data = self.get_bytes(&url)?;
         Ok(index::SpentBytes::new(data))
     }
 
     pub fn get_tx_bytes_from_block(&self, hash: BlockHash, offset: u64) -> Result<Vec<u8>, Error> {
-        self.get_bytes(&format!(
-            "{}/rest/txfromblock/{}-{}.bin",
-            self.url, hash, offset
-        ))
+        let url = format!("{}/rest/txfromblock/{}-{}.bin", self.url, hash, offset);
+        self.get_bytes(&url)
     }
 }

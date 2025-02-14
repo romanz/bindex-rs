@@ -1,7 +1,6 @@
 use crate::index;
 
 use bitcoin::{hashes::Hash, BlockHash};
-use log::*;
 
 pub struct Chain {
     rows: Vec<index::Header>,
@@ -9,13 +8,11 @@ pub struct Chain {
 
 impl Chain {
     pub fn new(rows: Vec<index::Header>) -> Self {
-        info!("loaded {} headers", rows.len());
         let mut block_hash = bitcoin::BlockHash::all_zeros();
         for row in &rows {
             assert_eq!(row.header().prev_blockhash, block_hash);
             block_hash = row.hash();
         }
-        debug!("verified {} headers, tip={}", rows.len(), block_hash);
         Self { rows }
     }
 

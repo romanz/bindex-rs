@@ -23,9 +23,6 @@ pub enum Error {
 
     #[error("Invalid transaction position: {0:?}")]
     InvalidPosition(index::TxPos),
-
-    #[error("Block {0} was rolled back")]
-    Rollback(bitcoin::BlockHash),
 }
 
 pub struct AddrIndex {
@@ -71,29 +68,17 @@ impl AddrIndex {
             if indexed_genesis.hash() != genesis_hash {
                 return Err(Error::ChainMismatch(indexed_genesis.hash(), genesis_hash));
             }
+            info!(
+                "block={} height={} headers loaded",
+                chain.tip_hash().unwrap(),
+                chain.tip_height().unwrap()
+            );
         }
-
         Ok(AddrIndex {
             genesis_hash,
             chain,
             client,
             store,
-        })
-    }
-
-    fn get_next_headers(&self, limit: usize) -> Result<Vec<client::HeaderInfo>, Error> {
-        Ok(match self.chain.tip_hash() {
-            None => self.client.get_headers_info(self.genesis_hash, limit)?,
-            Some(tip_hash) => {
-                let mut infos = self.client.get_headers_info(tip_hash, limit)?;
-                if infos.is_empty() {
-                    return Err(Error::Rollback(tip_hash));
-                }
-                let first_info = &infos[0];
-                assert_eq!(first_info.hash, tip_hash);
-                infos.remove(0);
-                infos
-            }
         })
     }
 
@@ -111,29 +96,32 @@ impl AddrIndex {
         let mut stats = Stats::default();
         let t = std::time::Instant::now();
 
-        let next_headers = loop {
-            match self.get_next_headers(limit) {
-                Ok(next_headers) => break next_headers,
-                Err(Error::Rollback(blockhash)) => {
-                    warn!(
-                        "block={} height={} was rolled back",
-                        blockhash,
-                        self.chain.tip_height().unwrap(),
-                    );
-                    assert_eq!(blockhash, self.drop_tip()?);
-                    continue;
-                }
-                Err(e) => {
-                    return Err(e);
-                }
-            };
+        let headers = loop {
+            let blockhash = self.chain.tip_hash().unwrap_or(self.genesis_hash);
+            let headers = self.client.get_headers(blockhash, limit)?;
+            if let Some(first) = headers.first() {
+                // skip first response header (when asking for non-genesis block)
+                let skip_first = Some(first.block_hash()) == self.chain.tip_hash();
+                break headers.into_iter().skip(if skip_first { 1 } else { 0 });
+            }
+            warn!(
+                "block={} height={} was rolled back",
+                blockhash,
+                self.chain.tip_height().unwrap(),
+            );
+            assert_eq!(blockhash, self.drop_tip()?);
         };
+
         let mut builder = index::Builder::new(&self.chain);
-        for info in next_headers {
+        for header in headers {
+            let blockhash = header.block_hash();
+            if self.chain.tip_hash() == Some(blockhash) {
+                continue; // skip first header from response
+            }
             // TODO: can be done concurrently
-            let block_bytes = self.client.get_block_bytes(info.hash)?;
-            let spent_bytes = self.client.get_spent_bytes(info.hash)?;
-            builder.index(info.hash, &block_bytes, &spent_bytes)?;
+            let block_bytes = self.client.get_block_bytes(blockhash)?;
+            let spent_bytes = self.client.get_spent_bytes(blockhash)?;
+            builder.index(blockhash, &block_bytes, &spent_bytes)?;
 
             stats.size_read += block_bytes.len();
             stats.size_read += spent_bytes.len();
@@ -149,7 +137,7 @@ impl AddrIndex {
         if stats.indexed_blocks > 0 {
             self.store.flush()?;
             info!(
-                "block={} height={}: {} indexed, {:.3}[MB], dt = {:.3}[s]: {:.3} [ms/block], {:.3} [MB/block], {:.3} [MB/s]",
+                "block={} height={}: indexed {} blocks, {:.3}[MB], dt = {:.3}[s]: {:.3} [ms/block], {:.3} [MB/block], {:.3} [MB/s]",
                 self.chain.tip_hash().unwrap(),
                 self.chain.tip_height().unwrap(),
                 stats.indexed_blocks,

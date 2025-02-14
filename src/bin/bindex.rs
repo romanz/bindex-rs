@@ -183,6 +183,7 @@ fn main() -> Result<(), Error> {
     let url = format!("http://localhost:{}", default_rpc_port);
     let db_path = format!("db/{default_db_dir}");
 
+    info!("Using DB={} URL={}", db_path, url);
     let scripts: HashSet<_> = args
         .addresses
         .iter()
