@@ -6,7 +6,7 @@ use std::{
     thread,
 };
 
-use bindex::{AddrIndex, Error, Location};
+use bindex::{address, Location};
 
 use bitcoin::consensus::deserialize;
 use chrono::{TimeZone, Utc};
@@ -43,9 +43,9 @@ impl Row {
 
 fn compute_balance(
     scripts: &HashSet<bitcoin::ScriptBuf>,
-    index: &AddrIndex,
+    index: &address::Index,
     history_limit: usize,
-) -> Result<(), Error> {
+) -> Result<(), address::Error> {
     if scripts.is_empty() {
         return Ok(());
     }
@@ -213,7 +213,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("watching {} addresses from {:?}", scripts.len(), path);
     }
 
-    let mut index = AddrIndex::open(db_path, url)?;
+    let mut index = address::Index::open(db_path, url)?;
     let mut updated = true;
     loop {
         while index.sync(1000)?.indexed_blocks > 0 {

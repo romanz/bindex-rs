@@ -46,7 +46,7 @@ impl Chain {
         self.rows.get(height)
     }
 
-    pub fn find_by_txpos(&self, txpos: &index::TxPos) -> Option<crate::Location> {
+    pub fn find_by_txpos(&self, txpos: &index::TxPos) -> Option<Location> {
         let height = match self
             .rows
             .binary_search_by_key(txpos, index::Header::next_txpos)
@@ -66,10 +66,23 @@ impl Chain {
             "binary search failed to find the correct position"
         );
         let offset = txpos.offset_from(prev_pos).unwrap();
-        Some(crate::Location {
+        Some(Location {
             height,
             offset,
             indexed_header,
         })
+    }
+}
+
+#[derive(PartialEq, Eq, PartialOrd)]
+pub struct Location<'a> {
+    pub height: usize, // block height
+    pub offset: u64,   // tx position within its block
+    pub indexed_header: &'a index::Header,
+}
+
+impl Ord for Location<'_> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.height, self.offset).cmp(&(other.height, other.offset))
     }
 }

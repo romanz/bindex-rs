@@ -1,3 +1,5 @@
+pub mod address;
+
 use std::ops::ControlFlow;
 
 use bitcoin::{consensus::Encodable, hashes::Hash, BlockHash};
