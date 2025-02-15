@@ -38,7 +38,9 @@ jobs:
         key: cargo-release-${{ hashFiles('**/Cargo.lock') }}-${{ runner.os }}
 
     - name: Build
-      run: cargo build --release --all --locked --timings
+      run: |
+        cargo tree --locked
+        cargo build --release --all --locked --timings
 
     - name: Test
       run: cargo test --release --all --locked
