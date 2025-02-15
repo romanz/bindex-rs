@@ -22,7 +22,13 @@ pub enum Error {
 bitcoin::hashes::hash_newtype! {
     /// https://electrumx-spesmilo.readthedocs.io/en/latest/protocol-basics.html#script-hashes
     #[hash_newtype(backward)]
-    struct ScriptHash(bitcoin::hashes::sha256::Hash);
+    pub struct ScriptHash(bitcoin::hashes::sha256::Hash);
+}
+
+impl ScriptHash {
+    pub fn new(script: &bitcoin::Script) -> Self {
+        Self::hash(script.as_bytes())
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
@@ -32,7 +38,7 @@ impl ScriptHashPrefix {
     const LEN: usize = 8;
 
     pub fn new(script: &bitcoin::Script) -> Self {
-        let script_hash = ScriptHash::hash(script.as_bytes());
+        let script_hash = ScriptHash::new(script);
         Self(script_hash[..ScriptHashPrefix::LEN].try_into().unwrap())
     }
 

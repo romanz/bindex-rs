@@ -4,4 +4,4 @@ mod db;
 mod index;
 
 pub use chain::Location;
-pub use index::address;
+pub use index::{address, ScriptHash};

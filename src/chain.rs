@@ -74,7 +74,7 @@ impl Chain {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd)]
+#[derive(PartialEq, Eq, PartialOrd, Clone, Copy)]
 pub struct Location<'a> {
     pub height: usize, // block height
     pub offset: u64,   // tx position within its block
