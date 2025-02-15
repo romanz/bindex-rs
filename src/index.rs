@@ -22,7 +22,13 @@ pub enum Error {
 bitcoin::hashes::hash_newtype! {
     /// https://electrumx-spesmilo.readthedocs.io/en/latest/protocol-basics.html#script-hashes
     #[hash_newtype(backward)]
-    struct ScriptHash(bitcoin::hashes::sha256::Hash);
+    pub struct ScriptHash(bitcoin::hashes::sha256::Hash);
+}
+
+impl ScriptHash {
+    pub fn new(script: &bitcoin::Script) -> Self {
+        Self::hash(script.as_bytes())
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
@@ -31,8 +37,7 @@ pub struct ScriptHashPrefix([u8; ScriptHashPrefix::LEN]);
 impl ScriptHashPrefix {
     const LEN: usize = 8;
 
-    pub fn new(script: &bitcoin::Script) -> Self {
-        let script_hash = ScriptHash::hash(script.as_bytes());
+    pub fn new(script_hash: &ScriptHash) -> Self {
         Self(script_hash[..ScriptHashPrefix::LEN].try_into().unwrap())
     }
 
@@ -60,7 +65,7 @@ pub struct ScriptHashPrefixRow {
 impl ScriptHashPrefixRow {
     const LEN: usize = ScriptHashPrefix::LEN + TxPos::LEN;
 
-    fn new(prefix: ScriptHashPrefix, txpos: TxPos) -> Self {
+    pub fn new(prefix: ScriptHashPrefix, txpos: TxPos) -> Self {
         let mut result = [0u8; ScriptHashPrefix::LEN + TxPos::LEN];
         result[..ScriptHashPrefix::LEN].copy_from_slice(&prefix.0);
         result[ScriptHashPrefix::LEN..].copy_from_slice(&txpos.0.to_be_bytes());
@@ -98,8 +103,9 @@ impl<'a> IndexVisitor<'a> {
             // skip indexing unspendable outputs
             return;
         }
+        let script_hash = ScriptHash::new(script);
         self.rows.push(ScriptHashPrefixRow::new(
-            ScriptHashPrefix::new(script),
+            ScriptHashPrefix::new(&script_hash),
             self.txpos,
         ));
     }

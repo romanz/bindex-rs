@@ -145,16 +145,24 @@ impl Store {
         Ok(())
     }
 
-    pub fn scan(&self, script: &bitcoin::Script) -> Result<Vec<index::TxPos>, rocksdb::Error> {
-        let prefix = index::ScriptHashPrefix::new(script);
+    pub fn scan(
+        &self,
+        script_hash: &index::ScriptHash,
+        from: index::TxPos,
+    ) -> Result<Vec<index::TxPos>, rocksdb::Error> {
         let cf = self.cf(SCRIPT_HASH_CF);
         let mut result = vec![];
-        for kv in self.db.prefix_iterator_cf(cf, prefix.as_bytes()) {
+
+        let prefix = index::ScriptHashPrefix::new(script_hash);
+        let start = index::ScriptHashPrefixRow::new(prefix, from);
+        let mode = rocksdb::IteratorMode::From(start.key(), rocksdb::Direction::Forward);
+        for kv in self.db.iterator_cf(cf, mode) {
             let (key, _) = kv?;
             if !key.starts_with(prefix.as_bytes()) {
                 break;
             }
             let row = index::ScriptHashPrefixRow::from_bytes(key[..].try_into().unwrap());
+            assert!(row.txpos() >= from);
             result.push(row.txpos());
         }
         Ok(result)

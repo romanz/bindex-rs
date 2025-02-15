@@ -1,10 +1,12 @@
+pub mod cache;
+
 use std::path::Path;
 
 use log::*;
 
 use crate::{
     chain::{self, Location},
-    client, db, index,
+    client, db, index, Chain,
 };
 
 #[derive(thiserror::Error, Debug)]
@@ -79,7 +81,7 @@ impl Index {
         Ok(stale.hash())
     }
 
-    pub fn sync(&mut self, limit: usize) -> Result<Stats, Error> {
+    pub fn sync_chain(&mut self, limit: usize) -> Result<Stats, Error> {
         let mut stats = Stats::default();
         let t = std::time::Instant::now();
 
@@ -140,21 +142,21 @@ impl Index {
         Ok(stats)
     }
 
-    pub fn find(&self, script: &bitcoin::Script) -> Result<Vec<Location>, Error> {
-        let positions = self.store.scan(script)?;
-        positions
-            .into_iter()
-            .map(|txpos| {
-                self.chain
-                    .find_by_txpos(&txpos)
-                    .ok_or_else(|| Error::InvalidPosition(txpos))
-            })
-            .collect::<Result<Vec<Location>, Error>>()
+    pub fn find_positions(
+        &self,
+        script_hash: &index::ScriptHash,
+        from: index::TxPos,
+    ) -> Result<Vec<index::TxPos>, Error> {
+        Ok(self.store.scan(script_hash, from)?)
     }
 
     pub fn get_tx_bytes(&self, location: &Location) -> Result<Vec<u8>, Error> {
         Ok(self
             .client
             .get_tx_bytes_from_block(location.indexed_header.hash(), location.offset)?)
+    }
+
+    pub fn chain(&self) -> &Chain {
+        &self.chain
     }
 }
