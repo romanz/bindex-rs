@@ -14,7 +14,7 @@ readme = "README.md"
 
 [dependencies]
 bitcoin = { version = "0.32", features = ["serde"] }
-bitcoin_slices = { version = "0.9", features = ["bitcoin"] }
+bitcoin_slices = { version = "0.10", features = ["bitcoin"] }
 env_logger = "0.11"
 hex = "0.4"
 log = "0.4"

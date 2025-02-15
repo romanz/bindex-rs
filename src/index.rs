@@ -132,18 +132,14 @@ fn visit_spent<'a>(
     slice: &'a [u8],
     visit: &mut IndexVisitor,
 ) -> bitcoin_slices::SResult<'a, Spent> {
-    let txs_count: bsl::Len = bsl::parse_len(slice)?;
-    let mut remaining = &slice[txs_count.consumed()..];
-    let mut consumed = txs_count.consumed();
+    let mut consumed = 0;
+    let txs_count = bsl::scan_len(slice, &mut consumed)?;
 
-    for _ in 0..txs_count.n() {
-        let outputs_count: bsl::Len = bsl::parse_len(remaining)?;
-        remaining = &remaining[outputs_count.consumed()..];
-        consumed += outputs_count.consumed();
+    for _ in 0..txs_count {
+        let outputs_count = bsl::scan_len(&slice[consumed..], &mut consumed)?;
 
-        for _ in 0..outputs_count.n() {
-            let tx_out = bsl::TxOut::parse(remaining)?;
-            remaining = tx_out.remaining();
+        for _ in 0..outputs_count {
+            let tx_out = bsl::TxOut::parse(&slice[consumed..])?;
             consumed += tx_out.consumed();
             let script_pubkey = tx_out.parsed().script_pubkey();
             visit.add(bitcoin::Script::from_bytes(script_pubkey));
