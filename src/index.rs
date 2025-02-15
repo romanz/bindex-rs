@@ -60,7 +60,7 @@ pub struct ScriptHashPrefixRow {
 impl ScriptHashPrefixRow {
     const LEN: usize = ScriptHashPrefix::LEN + TxPos::LEN;
 
-    pub fn new(prefix: ScriptHashPrefix, txpos: TxPos) -> Self {
+    fn new(prefix: ScriptHashPrefix, txpos: TxPos) -> Self {
         let mut result = [0u8; ScriptHashPrefix::LEN + TxPos::LEN];
         result[..ScriptHashPrefix::LEN].copy_from_slice(&prefix.0);
         result[ScriptHashPrefix::LEN..].copy_from_slice(&txpos.0.to_be_bytes());
@@ -237,11 +237,11 @@ impl BlockBytes {
         BlockBytes(data)
     }
 
-    pub fn header(&self) -> &[u8] {
+    fn header(&self) -> &[u8] {
         &self.0[..BLOCK_HEADER_LEN]
     }
 
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.0.len()
     }
 }
@@ -253,7 +253,7 @@ impl SpentBytes {
         SpentBytes(data)
     }
 
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.0.len()
     }
 }
@@ -264,7 +264,7 @@ pub struct Batch {
 }
 
 impl Batch {
-    pub fn build(
+    fn build(
         hash: BlockHash,
         txpos: TxPos,
         block: &BlockBytes,
@@ -289,14 +289,14 @@ impl Batch {
     }
 }
 
-pub struct Builder {
+struct Builder {
     batches: Vec<Batch>,
     next_txpos: TxPos,
     tip: bitcoin::BlockHash,
 }
 
 impl Builder {
-    pub fn new(chain: &Chain) -> Self {
+    fn new(chain: &Chain) -> Self {
         Self {
             next_txpos: chain.next_txpos(),
             batches: vec![],
@@ -306,7 +306,7 @@ impl Builder {
         }
     }
 
-    pub fn index(
+    fn index(
         &mut self,
         hash: bitcoin::BlockHash,
         block_bytes: &BlockBytes,
@@ -320,7 +320,7 @@ impl Builder {
         Ok(())
     }
 
-    pub fn into_batches(self) -> Vec<Batch> {
+    fn into_batches(self) -> Vec<Batch> {
         self.batches
     }
 }
