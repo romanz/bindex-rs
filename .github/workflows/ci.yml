@@ -12,7 +12,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  ubuntu_noble:
     runs-on: ubuntu-latest
 
     steps:
@@ -56,7 +56,7 @@ jobs:
         retention-days: 30
 
 
-  integration:
+  debian_trixie:
     runs-on: ubuntu-latest
 
     steps:
