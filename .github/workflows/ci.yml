@@ -41,6 +41,7 @@ jobs:
       run: |
         cargo tree --locked
         cargo build --release --all --locked --timings
+        mv -v target/cargo-timings/cargo-timing-*.html .
 
     - name: Test
       run: cargo test --release --all --locked
@@ -54,7 +55,7 @@ jobs:
     - uses: actions/upload-artifact@v4
       with:
         name: cargo-build-timings
-        path: target/cargo-timings/cargo-timing-*.html
+        path: cargo-timing-*.html
         retention-days: 30
 
 
