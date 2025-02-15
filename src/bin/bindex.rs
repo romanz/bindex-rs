@@ -1,6 +1,10 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::str::FromStr;
-use std::thread;
+use std::{
+    collections::{BTreeSet, HashMap, HashSet},
+    io::Read,
+    path::{Path, PathBuf},
+    str::FromStr,
+    thread,
+};
 
 use bindex::{AddrIndex, Error, Location};
 
@@ -160,10 +164,11 @@ struct Args {
     #[arg(short = 'l', long = "limit", default_value_t = 100)]
     history_limit: usize,
 
-    addresses: Vec<String>,
+    #[arg(short = 'a', long = "address-file")]
+    address_file: Option<PathBuf>,
 }
 
-fn main() -> Result<(), Error> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     env_logger::builder().format_timestamp_micros().init();
     let default_rpc_port = match args.network {
@@ -182,11 +187,21 @@ fn main() -> Result<(), Error> {
     };
     let url = format!("http://localhost:{}", default_rpc_port);
     let db_path = format!("db/{default_db_dir}");
+    info!("index DB: {}, node URL: {}", db_path, url);
 
-    info!("Using DB={} URL={}", db_path, url);
-    let scripts: HashSet<_> = args
-        .addresses
-        .iter()
+    let addresses = args.address_file.as_ref().map_or_else(
+        || Ok(String::new()),
+        |path| {
+            if path == Path::new("-") {
+                let mut buf = String::new();
+                std::io::stdin().read_to_string(&mut buf)?;
+                return Ok(buf);
+            }
+            std::fs::read_to_string(path)
+        },
+    )?;
+    let scripts: HashSet<_> = addresses
+        .split_ascii_whitespace()
         .map(|addr| {
             bitcoin::Address::from_str(addr)
                 .unwrap()
@@ -194,6 +209,9 @@ fn main() -> Result<(), Error> {
                 .script_pubkey()
         })
         .collect();
+    if let Some(path) = args.address_file {
+        info!("watching {} addresses from {:?}", scripts.len(), path);
+    }
 
     let mut index = AddrIndex::open(db_path, url)?;
     let mut updated = true;
