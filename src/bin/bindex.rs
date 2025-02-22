@@ -142,7 +142,9 @@ fn print_history(mut entries: Vec<Entry>, history_limit: usize) {
         if is_truncated {
             entries.push(Entry::dots());
         }
-
+        if entries.is_empty() {
+            return;
+        }
         let mut tbl = tabled::Table::new(entries);
         tbl.with(tabled::settings::Style::rounded());
         tbl.modify(
@@ -255,12 +257,12 @@ fn main() -> Result<()> {
         while index.sync_chain(1000)?.indexed_blocks > 0 {
             updated = true;
         }
-        if updated {
+        if updated && !scripts.is_empty() {
             cache.sync(&scripts, &index)?;
             let entries = get_history(cache.db(), &scripts, index.chain())?;
             print_history(entries, args.history_limit);
-            updated = false;
         }
+        updated = false;
         thread::sleep(std::time::Duration::from_secs(1));
     }
 }
