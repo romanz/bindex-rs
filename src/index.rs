@@ -1,5 +1,3 @@
-pub mod address;
-
 use std::ops::ControlFlow;
 
 use bitcoin::{consensus::Encodable, hashes::Hash, BlockHash};
@@ -247,7 +245,7 @@ impl BlockBytes {
         &self.0[..BLOCK_HEADER_LEN]
     }
 
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.0.len()
     }
 }
@@ -259,7 +257,7 @@ impl SpentBytes {
         SpentBytes(data)
     }
 
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.0.len()
     }
 }
@@ -295,14 +293,14 @@ impl Batch {
     }
 }
 
-struct Builder {
+pub struct Builder {
     batches: Vec<Batch>,
     next_txpos: TxPos,
     tip: bitcoin::BlockHash,
 }
 
 impl Builder {
-    fn new(chain: &Chain) -> Self {
+    pub fn new(chain: &Chain) -> Self {
         Self {
             next_txpos: chain.next_txpos(),
             batches: vec![],
@@ -312,7 +310,7 @@ impl Builder {
         }
     }
 
-    fn index(
+    pub fn index(
         &mut self,
         hash: bitcoin::BlockHash,
         block_bytes: &BlockBytes,
@@ -326,7 +324,7 @@ impl Builder {
         Ok(())
     }
 
-    fn into_batches(self) -> Vec<Batch> {
+    pub fn into_batches(self) -> Vec<Batch> {
         self.batches
     }
 }

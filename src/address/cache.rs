@@ -5,7 +5,7 @@ use bitcoin_slices::{bsl, Parse};
 use log::*;
 use rusqlite::OptionalExtension;
 
-use crate::{index::address, Location, ScriptHash};
+use crate::{address, Location, ScriptHash};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -77,7 +77,6 @@ impl Cache {
                 entries += self.sync_history(&script_hash, index, &mut new_locations)?;
             }
             let txs = self.sync_transactions(&new_locations, index)?;
-            // self.db.execute("COMMIT", ())?; // TODO rollback on error?
             if entries > 0 || txs > 0 {
                 info!(
                     "cached {} history entries, {} transactions @ '{}'",
