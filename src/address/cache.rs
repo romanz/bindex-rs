@@ -5,7 +5,7 @@ use bitcoin_slices::{bsl, Parse};
 use log::*;
 use rusqlite::OptionalExtension;
 
-use crate::{address, Location, ScriptHash};
+use crate::{address, index, Location, ScriptHash};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -14,6 +14,9 @@ pub enum Error {
 
     #[error("address index failed: {0}")]
     Index(#[from] address::Error),
+
+    #[error("Invalid transaction position: {0:?}")]
+    InvalidPosition(index::TxPos),
 }
 
 pub struct Cache {
@@ -108,7 +111,9 @@ impl Cache {
             .find_positions(script_hash, from)?
             .into_iter()
             .map(|txpos| {
-                let loc = chain.find_by_txpos(&txpos).expect("TODO reorg");
+                let loc = chain
+                    .find_by_txpos(&txpos)
+                    .ok_or_else(|| Error::InvalidPosition(txpos))?;
                 let block_hash = loc.indexed_header.hash();
                 let inserted = stmt.execute((
                     script_hash.as_byte_array(),

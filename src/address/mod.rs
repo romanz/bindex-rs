@@ -22,9 +22,6 @@ pub enum Error {
 
     #[error("Genesis block hash mismatch: {0} != {1}")]
     ChainMismatch(bitcoin::BlockHash, bitcoin::BlockHash),
-
-    #[error("Invalid transaction position: {0:?}")]
-    InvalidPosition(index::TxPos),
 }
 
 pub struct Index {
