@@ -37,12 +37,19 @@ jobs:
           target/
         key: cargo-release-${{ hashFiles('**/Cargo.lock') }}-${{ runner.os }}
 
+    - name: Dependency tree
+      run: cargo tree --locked
+
     - name: Build
       run: |
-        cargo tree --locked
         cargo build --release --all --locked --timings
-        target/release/bindex --version  # make sure it runs
         mv -v target/cargo-timings/cargo-timing-*.html .
+        mv -v target/release/bindex /usr/local/bin/bindex
+
+    - name: Sanity
+      run: |
+        bindex --version  # make sure it can run
+        bindex --help
 
     - name: Test
       run: cargo test --release --all --locked
