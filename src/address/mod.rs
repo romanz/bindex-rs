@@ -139,12 +139,16 @@ impl Index {
         Ok(stats)
     }
 
-    pub fn find_positions(
+    pub fn find_locations(
         &self,
         script_hash: &index::ScriptHash,
         from: index::TxPos,
-    ) -> Result<Vec<index::TxPos>, Error> {
-        Ok(self.store.scan(script_hash, from)?)
+    ) -> Result<impl Iterator<Item = Location>, Error> {
+        Ok(self
+            .store
+            .scan(script_hash, from)?
+            // chain and store must be in sync
+            .map(|txpos| self.chain.find_by_txpos(&txpos).expect("invalid position")))
     }
 
     pub fn get_tx_bytes(&self, location: &Location) -> Result<Vec<u8>, Error> {

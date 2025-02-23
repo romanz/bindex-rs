@@ -149,9 +149,9 @@ impl Store {
         &self,
         script_hash: &index::ScriptHash,
         from: index::TxPos,
-    ) -> Result<Vec<index::TxPos>, rocksdb::Error> {
+    ) -> Result<impl Iterator<Item = index::TxPos>, rocksdb::Error> {
         let cf = self.cf(SCRIPT_HASH_CF);
-        let mut result = vec![];
+        let mut positions = Vec::new();
 
         let prefix = index::ScriptHashPrefix::new(script_hash);
         let start = index::ScriptHashPrefixRow::new(prefix, from);
@@ -163,9 +163,9 @@ impl Store {
             }
             let row = index::ScriptHashPrefixRow::from_bytes(key[..].try_into().unwrap());
             assert!(row.txpos() >= from);
-            result.push(row.txpos());
+            positions.push(row.txpos());
         }
-        Ok(result)
+        Ok(positions.into_iter())
     }
 
     pub fn headers(&self) -> Result<Vec<index::Header>, rocksdb::Error> {
