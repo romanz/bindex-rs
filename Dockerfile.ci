@@ -2,12 +2,12 @@ FROM debian:trixie AS base
 
 # Prepare base image
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update -qqy
-RUN apt-get install -qqy librocksdb-dev libsqlite3-dev
+RUN apt-get -qqy update
+RUN apt-get -qqy install librocksdb-dev libsqlite3-dev
 
 # Prepare builder image
 FROM base AS builder
-RUN apt-get install -qqy cargo libclang-dev
+RUN apt-get -qqy install cargo libclang-dev
 
 WORKDIR /build/
 COPY . .
