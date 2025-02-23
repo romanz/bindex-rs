@@ -164,7 +164,7 @@ impl Cache {
         &'a self,
         script_hash: &crate::ScriptHash,
         chain: &'a crate::Chain,
-    ) -> rusqlite::Result<Option<Location<'a>>> {
+    ) -> Result<Option<Location<'a>>, Error> {
         let mut stmt = self.db.prepare(
             r"
             SELECT block_hash, block_height, block_offset
@@ -173,21 +173,22 @@ impl Cache {
             ORDER BY block_height DESC
             LIMIT 1",
         )?;
-        stmt.query_row([script_hash.as_byte_array()], |row| {
-            let block_hash: [u8; bitcoin::BlockHash::LEN] = row.get(0)?;
-            let height: usize = row.get(1)?;
-            let offset: u64 = row.get(2)?;
+        Ok(stmt
+            .query_row([script_hash.as_byte_array()], |row| {
+                let blockhash = bitcoin::BlockHash::from_byte_array(row.get(0)?);
+                let height: usize = row.get(1)?;
+                let offset: u64 = row.get(2)?;
 
-            let header = chain.get_by_height(height).expect("TODO reorg");
-            assert_eq!(&block_hash, header.hash().as_byte_array(), "TODO reorg");
+                let header = chain.get_by_height(height).expect("TODO reorg");
+                assert_eq!(blockhash, header.hash(), "TODO reorg");
 
-            Ok(Location {
-                height,
-                offset,
-                indexed_header: header,
+                Ok(Location {
+                    height,
+                    offset,
+                    indexed_header: header,
+                })
             })
-        })
-        .optional()
+            .optional()?)
     }
 
     pub fn db(&self) -> &rusqlite::Connection {
