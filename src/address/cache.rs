@@ -178,14 +178,10 @@ impl Cache {
                 let blockhash = bitcoin::BlockHash::from_byte_array(row.get(0)?);
                 let height: usize = row.get(1)?;
                 let offset: u64 = row.get(2)?;
-
-                let header = chain.get_by_height(height).expect("TODO reorg");
-                assert_eq!(blockhash, header.hash(), "TODO reorg");
-
                 Ok(Location {
                     height,
                     offset,
-                    indexed_header: header,
+                    indexed_header: chain.get_header(blockhash, height).expect("TODO reorg"),
                 })
             })
             .optional()?)

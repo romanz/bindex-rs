@@ -53,7 +53,7 @@ impl Index {
 
         let store = db::Store::open(db_path)?;
         let chain = chain::Chain::new(store.headers()?);
-        if let Some(indexed_genesis) = chain.get_by_height(0) {
+        if let Some(indexed_genesis) = chain.genesis() {
             if indexed_genesis.hash() != genesis_hash {
                 return Err(Error::ChainMismatch(indexed_genesis.hash(), genesis_hash));
             }

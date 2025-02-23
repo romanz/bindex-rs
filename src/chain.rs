@@ -2,6 +2,16 @@ use crate::index;
 
 use bitcoin::{hashes::Hash, BlockHash};
 
+
+#[derive(thiserror::Error, Debug)]
+pub enum Reorg {
+    #[error("missing block={0} at height={1}")]
+    Missing(bitcoin::BlockHash, usize),
+
+    #[error("stale block={0} at height={1}")]
+    Stale(bitcoin::BlockHash, usize),
+}
+
 pub struct Chain {
     rows: Vec<index::Header>,
 }
@@ -42,8 +52,19 @@ impl Chain {
         self.rows.pop()
     }
 
-    pub fn get_by_height(&self, height: usize) -> Option<&index::Header> {
-        self.rows.get(height)
+    pub fn genesis(&self) -> Option<&index::Header> {
+        self.rows.get(0)
+    }
+
+    pub fn get_header(&self, hash: BlockHash, height: usize) -> Result<&index::Header, Reorg> {
+        let header = match self.rows.get(height) {
+            Some(h) => h,
+            None => return Err(Reorg::Missing(hash, height)),
+        };
+        if header.hash() != hash {
+            return Err(Reorg::Stale(hash, height));
+        }
+        Ok(header)
     }
 
     pub fn find_by_txpos(&self, txpos: &index::TxPos) -> Option<Location> {

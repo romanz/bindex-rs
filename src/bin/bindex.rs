@@ -60,13 +60,10 @@ fn get_history(
         let offset: u64 = row.get(1)?;
         let height: usize = row.get(2)?;
 
-        let indexed_header = chain.get_by_height(height).expect("TODO reorg");
-        assert_eq!(blockhash, indexed_header.hash());
-
         let location = Location {
             height,
             offset,
-            indexed_header,
+            indexed_header: chain.get_header(blockhash, height).expect("TODO reorg"),
         };
 
         let txid = Txid::from_byte_array(row.get(3)?);
