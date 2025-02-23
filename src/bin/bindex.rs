@@ -52,7 +52,7 @@ fn get_history(
     let mut stmt = db.prepare(
         r"
         SELECT block_hash, block_offset, block_height, tx_id, tx_bytes
-        FROM txcache
+        FROM transactions
         ORDER BY block_height ASC, block_offset ASC",
     )?;
     let results = stmt.query_map([], |row| {

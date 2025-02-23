@@ -55,7 +55,7 @@ impl Cache {
         )?;
         self.db.execute(
             r"
-            CREATE TABLE IF NOT EXISTS txcache (
+            CREATE TABLE IF NOT EXISTS transactions (
                 block_hash BLOB NOT NULL,
                 block_offset INTEGER NOT NULL,
                 block_height INTEGER NOT NULL,
@@ -76,12 +76,12 @@ impl Cache {
                 let script_hash = ScriptHash::new(script);
                 entries += self.sync_history(&script_hash, index, &mut new_locations)?;
             }
-            let txs = self.sync_transactions(&new_locations, index)?;
-            if entries > 0 || txs > 0 {
+            let transactions = self.sync_transactions(&new_locations, index)?;
+            if entries > 0 || transactions > 0 {
                 info!(
-                    "cached {} history entries, {} transactions @ '{}'",
+                    "added {} history entries, {} transactions to cache={:?}",
                     entries,
-                    txs,
+                    transactions,
                     self.db.path().unwrap_or("")
                 );
             }
@@ -131,12 +131,12 @@ impl Cache {
     ) -> Result<usize, Error> {
         let mut insert = self.db.prepare(
             r"
-            INSERT OR IGNORE INTO txcache(block_hash, block_offset, block_height) 
+            INSERT OR IGNORE INTO transactions(block_hash, block_offset, block_height)
             VALUES (?1, ?2, ?3)",
         )?;
         let mut update = self.db.prepare(
             r"
-                UPDATE txcache SET tx_bytes = ?3, tx_id = ?4 
+                UPDATE transactions SET tx_bytes = ?3, tx_id = ?4
                 WHERE block_hash = ?1 AND block_offset = ?2",
         )?;
         let mut rows = 0;
@@ -167,8 +167,8 @@ impl Cache {
     ) -> rusqlite::Result<Option<Location<'a>>> {
         let mut stmt = self.db.prepare(
             r"
-            SELECT block_hash, block_height, block_offset 
-            FROM history 
+            SELECT block_hash, block_height, block_offset
+            FROM history
             WHERE script_hash = ?1
             ORDER BY block_height DESC
             LIMIT 1",
