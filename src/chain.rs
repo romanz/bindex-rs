@@ -2,7 +2,6 @@ use crate::index;
 
 use bitcoin::{hashes::Hash, BlockHash};
 
-
 #[derive(thiserror::Error, Debug)]
 pub enum Reorg {
     #[error("missing block={0} at height={1}")]
@@ -53,7 +52,7 @@ impl Chain {
     }
 
     pub fn genesis(&self) -> Option<&index::Header> {
-        self.rows.get(0)
+        self.rows.first()
     }
 
     pub fn get_header(&self, hash: BlockHash, height: usize) -> Result<&index::Header, Reorg> {
