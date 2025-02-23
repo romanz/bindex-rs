@@ -249,7 +249,7 @@ fn main() -> Result<()> {
     let cache = cache::Cache::open(cache_db)?;
     let scripts = collect_scripts(&args)?;
     let mut index = open_index(&args)?;
-    let mut updated = true;
+    let mut updated = true; // to sync the cache on first iteration
     loop {
         while index.sync_chain(1000)?.indexed_blocks > 0 {
             updated = true;
