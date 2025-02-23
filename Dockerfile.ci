@@ -15,7 +15,7 @@ COPY . .
 # Build with dynamically linked RocksDB library
 ENV ROCKSDB_INCLUDE_DIR=/usr/include
 ENV ROCKSDB_LIB_DIR=/usr/lib
-RUN cargo build --release --locked --all -v
+RUN cargo build --release --locked --all
 
 # Copy the binaries into runner image
 FROM base AS runner
