@@ -97,7 +97,7 @@ impl Cache {
     ) -> Result<usize, Error> {
         let mut stmt = self
             .db
-            .prepare("INSERT OR IGNORE INTO history VALUES (?1, ?2, ?3, ?4)")?; // TODO remove 'OR IGNORE'
+            .prepare("INSERT INTO history VALUES (?1, ?2, ?3, ?4)")?;
 
         let chain = index.chain();
         let from = match self.latest_location(script_hash, chain)? {
