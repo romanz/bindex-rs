@@ -11,4 +11,4 @@ https://github.com/bitcoin/bitcoin/compare/master...romanz:bitcoin:bindex
 
 ## Usage
 
-[![asciicast](https://asciinema.org/a/Cq4Uj7nvHSfoAkElJA3W2xR1L.svg)](https://asciinema.org/a/Cq4Uj7nvHSfoAkElJA3W2xR1L)
+[![asciicast](https://asciinema.org/a/yFjcbagORZNMtoOPikw0kUlC9.svg)](https://asciinema.org/a/yFjcbagORZNMtoOPikw0kUlC9)
