@@ -17,9 +17,6 @@ pub enum Error {
 
     #[error("decoding failed: {0}")]
     Decoding(#[from] bitcoin::consensus::encode::Error),
-
-    #[error("bad JSON: {0}")]
-    Json(#[from] serde_json::Error),
 }
 
 pub struct Client {
