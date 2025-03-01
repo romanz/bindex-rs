@@ -184,7 +184,7 @@ struct Args {
 
     /// SQLite3 database for storing address history and relevant transactions
     #[arg(short = 'c', long = "cache")]
-    status_cache: Option<String>,
+    cache_file: Option<PathBuf>,
 }
 
 fn open_index(args: &Args) -> Result<address::Index> {
@@ -241,9 +241,9 @@ fn collect_scripts(args: &Args) -> std::io::Result<HashSet<bitcoin::ScriptBuf>> 
 fn main() -> Result<()> {
     let args = Args::parse();
     env_logger::builder().format_timestamp_micros().init();
-    let cache_db = rusqlite::Connection::open(Path::new(match args.status_cache {
-        Some(ref s) => s.as_str(),
-        None => ":memory:",
+    let cache_db = rusqlite::Connection::open(Path::new(match args.cache_file {
+        Some(ref p) => p.as_path(),
+        None => Path::new(":memory:"),
     }))?;
 
     let cache = cache::Cache::open(cache_db)?;
