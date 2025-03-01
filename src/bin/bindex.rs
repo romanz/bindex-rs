@@ -167,7 +167,7 @@ enum Network {
     Signet,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 #[command(version, about, long_about = None)]
 /// Bitcoin address indexer
 struct Args {
