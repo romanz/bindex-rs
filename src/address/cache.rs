@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashSet};
 
-use bitcoin::{hashes::Hash, ScriptBuf, Txid};
+use bitcoin::{consensus::serialize, hashes::Hash, ScriptBuf, Txid};
 use bitcoin_slices::{bsl, Parse};
 use log::*;
 use rusqlite::OptionalExtension;
@@ -48,7 +48,6 @@ impl Cache {
                 script_hash BLOB NOT NULL,
                 block_hash BLOB NOT NULL,
                 block_offset INTEGER NOT NULL,
-                block_height INTEGER NOT NULL,
                 PRIMARY KEY (script_hash, block_hash, block_offset)
             ) WITHOUT ROWID",
             (),
@@ -58,10 +57,19 @@ impl Cache {
             CREATE TABLE IF NOT EXISTS transactions (
                 block_hash BLOB NOT NULL,
                 block_offset INTEGER NOT NULL,
-                block_height INTEGER NOT NULL,
                 tx_id BLOB,
                 tx_bytes BLOB,
                 PRIMARY KEY (block_hash, block_offset)
+            ) WITHOUT ROWID",
+            (),
+        )?;
+        self.db.execute(
+            r"
+            CREATE TABLE IF NOT EXISTS headers (
+                block_hash BLOB NOT NULL,
+                block_height INTEGER,
+                header_bytes BLOB,
+                PRIMARY KEY (block_hash)
             ) WITHOUT ROWID",
             (),
         )?;
@@ -76,17 +84,44 @@ impl Cache {
                 let script_hash = ScriptHash::new(script);
                 entries += self.sync_history(&script_hash, index, &mut new_locations)?;
             }
+            let headers = self.sync_headers(new_locations.iter())?;
             let transactions = self.sync_transactions(&new_locations, index)?;
-            if entries > 0 || transactions > 0 {
+            if entries > 0 || transactions > 0 || headers > 0 {
                 info!(
-                    "added {} history entries, {} transactions to cache={:?}",
+                    "added {} history entries, {} transactions, {} headers to cache={:?}",
                     entries,
                     transactions,
+                    headers,
                     self.db.path().unwrap_or("")
                 );
             }
             Ok(())
         })
+    }
+
+    fn sync_headers<'a>(
+        &self,
+        new_locations: impl Iterator<Item = &'a Location<'a>>,
+    ) -> Result<usize, Error> {
+        let headers: HashSet<_> = new_locations
+            .map(|loc| {
+                (
+                    loc.height,
+                    loc.indexed_header.hash(),
+                    loc.indexed_header.header(),
+                )
+            })
+            .collect();
+
+        let mut insert = self
+            .db
+            .prepare("INSERT OR IGNORE INTO headers VALUES (?1, ?2, ?3)")?;
+        let mut rows = 0;
+        for (height, block_hash, header) in headers {
+            let header_bytes = serialize(header);
+            rows += insert.execute((block_hash.as_byte_array(), height, header_bytes))?;
+        }
+        Ok(rows)
     }
 
     fn sync_history<'a>(
@@ -95,9 +130,7 @@ impl Cache {
         index: &'a address::Index,
         new_locations: &mut BTreeSet<Location<'a>>,
     ) -> Result<usize, Error> {
-        let mut stmt = self
-            .db
-            .prepare("INSERT INTO history VALUES (?1, ?2, ?3, ?4)")?;
+        let mut stmt = self.db.prepare("INSERT INTO history VALUES (?1, ?2, ?3)")?;
 
         let chain = index.chain();
         let from = match self.latest_location(script_hash, chain)? {
@@ -112,7 +145,6 @@ impl Cache {
                     script_hash.as_byte_array(),
                     block_hash.as_byte_array(),
                     loc.offset,
-                    loc.height,
                 ))?;
                 if inserted > 0 {
                     new_locations.insert(loc);
@@ -129,8 +161,8 @@ impl Cache {
     ) -> Result<usize, Error> {
         let mut insert = self.db.prepare(
             r"
-            INSERT OR IGNORE INTO transactions(block_hash, block_offset, block_height)
-            VALUES (?1, ?2, ?3)",
+            INSERT OR IGNORE INTO transactions(block_hash, block_offset)
+            VALUES (?1, ?2)",
         )?;
         let mut update = self.db.prepare(
             r"
@@ -140,7 +172,7 @@ impl Cache {
         let mut rows = 0;
         for loc in locations {
             let block_hash = loc.indexed_header.hash();
-            let inserted = insert.execute((block_hash.as_byte_array(), loc.offset, loc.height))?;
+            let inserted = insert.execute((block_hash.as_byte_array(), loc.offset))?;
             if inserted > 0 {
                 // fetch transaction bytes only if needed
                 let tx_bytes = index.get_tx_bytes(loc).expect("missing tx bytes");
@@ -166,7 +198,7 @@ impl Cache {
         let mut stmt = self.db.prepare(
             r"
             SELECT block_hash, block_height, block_offset
-            FROM history
+            FROM history INNER JOIN headers USING (block_hash)
             WHERE script_hash = ?1
             ORDER BY block_height DESC
             LIMIT 1",
