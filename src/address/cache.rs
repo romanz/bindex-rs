@@ -44,11 +44,11 @@ impl Cache {
     fn create_tables(&self) -> Result<(), Error> {
         self.db.execute(
             r"
-            CREATE TABLE IF NOT EXISTS history (
-                script_hash BLOB NOT NULL,
+            CREATE TABLE IF NOT EXISTS headers (
                 block_hash BLOB NOT NULL,
-                block_offset INTEGER NOT NULL,
-                PRIMARY KEY (script_hash, block_hash, block_offset)
+                block_height INTEGER,
+                header_bytes BLOB,
+                PRIMARY KEY (block_hash)
             ) WITHOUT ROWID",
             (),
         )?;
@@ -60,16 +60,18 @@ impl Cache {
                 tx_id BLOB,
                 tx_bytes BLOB,
                 PRIMARY KEY (block_hash, block_offset)
+                FOREIGN KEY (block_hash) REFERENCES headers (block_hash)
             ) WITHOUT ROWID",
             (),
         )?;
         self.db.execute(
             r"
-            CREATE TABLE IF NOT EXISTS headers (
+            CREATE TABLE IF NOT EXISTS history (
+                script_hash BLOB NOT NULL,
                 block_hash BLOB NOT NULL,
-                block_height INTEGER,
-                header_bytes BLOB,
-                PRIMARY KEY (block_hash)
+                block_offset INTEGER NOT NULL,
+                PRIMARY KEY (script_hash, block_hash, block_offset)
+                FOREIGN KEY (block_hash, block_offset) REFERENCES transactions (block_hash, block_offset)
             ) WITHOUT ROWID",
             (),
         )?;
