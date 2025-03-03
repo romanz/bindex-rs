@@ -167,6 +167,18 @@ enum Network {
     Signet,
 }
 
+impl From<Network> for bitcoin::Network {
+    fn from(value: Network) -> Self {
+        match value {
+            Network::Bitcoin => bitcoin::Network::Bitcoin,
+            Network::Testnet => bitcoin::Network::Testnet,
+            Network::Testnet4 => bitcoin::Network::Testnet4,
+            Network::Regtest => bitcoin::Network::Regtest,
+            Network::Signet => bitcoin::Network::Signet,
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 /// Bitcoin address indexer
@@ -178,7 +190,7 @@ struct Args {
     #[arg(short = 'l', long = "limit", default_value_t = 100)]
     history_limit: usize,
 
-    /// Text file, containing white-space separated addresses
+    /// Text file, containing white-space separated addresses to add
     #[arg(short = 'a', long = "address-file")]
     address_file: Option<PathBuf>,
 
@@ -211,8 +223,8 @@ fn open_index(args: &Args) -> Result<address::Index> {
     Ok(address::Index::open(db_path, url)?)
 }
 
-fn collect_scripts(args: &Args) -> std::io::Result<HashSet<bitcoin::ScriptBuf>> {
-    let addresses = args.address_file.as_ref().map_or_else(
+fn collect_addresses(args: &Args) -> Result<HashSet<bitcoin::Address>> {
+    let text = args.address_file.as_ref().map_or_else(
         || Ok(String::new()),
         |path| {
             if path == Path::new("-") {
@@ -223,19 +235,13 @@ fn collect_scripts(args: &Args) -> std::io::Result<HashSet<bitcoin::ScriptBuf>> 
             std::fs::read_to_string(path)
         },
     )?;
-    let scripts: HashSet<_> = addresses
+    let addresses = text
         .split_whitespace()
-        .map(|addr| {
-            bitcoin::Address::from_str(addr)
-                .unwrap()
-                .assume_checked()
-                .script_pubkey()
+        .map(|addr| -> Result<bitcoin::Address> {
+            Ok(bitcoin::Address::from_str(addr)?.require_network(args.network.into())?)
         })
-        .collect();
-    if let Some(path) = args.address_file.as_ref() {
-        info!("watching {} addresses from {:?}", scripts.len(), path);
-    }
-    Ok(scripts)
+        .collect::<Result<_>>()?;
+    Ok(addresses)
 }
 
 fn main() -> Result<()> {
@@ -247,7 +253,9 @@ fn main() -> Result<()> {
     }))?;
 
     let cache = cache::Cache::open(cache_db)?;
-    let scripts = collect_scripts(&args)?;
+    cache.add(collect_addresses(&args)?)?;
+
+    let scripts = cache.scripts()?;
     let mut index = open_index(&args)?;
     let mut updated = true; // to sync the cache on first iteration
     loop {

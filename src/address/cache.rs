@@ -14,6 +14,9 @@ pub enum Error {
 
     #[error("address index failed: {0}")]
     Index(#[from] address::Error),
+
+    #[error("parse failed: {0}")]
+    Address(#[from] bitcoin::address::ParseError),
 }
 
 pub struct Cache {
@@ -42,6 +45,15 @@ impl Cache {
     }
 
     fn create_tables(&self) -> Result<(), Error> {
+        self.db.execute(
+            r"
+            CREATE TABLE IF NOT EXISTS watch (
+                address TEXT NOT NULL,
+                script BLOB NOT NULL,
+                PRIMARY KEY (address)
+            ) WITHOUT ROWID",
+            (),
+        )?;
         self.db.execute(
             r"
             CREATE TABLE IF NOT EXISTS headers (
@@ -217,6 +229,34 @@ impl Cache {
                 })
             })
             .optional()?)
+    }
+
+    pub fn scripts(&self) -> Result<HashSet<ScriptBuf>, Error> {
+        let mut select = self.db.prepare("SELECT script FROM watch")?;
+        let blobs = select.query_map([], |row| row.get::<_, Vec<u8>>(0))?;
+        let scripts = blobs
+            .map(|blob| Ok(ScriptBuf::from_bytes(blob?)))
+            .collect::<Result<HashSet<_>, Error>>()?;
+        info!(
+            "watching {} addresses from '{}'",
+            scripts.len(),
+            self.db.path().unwrap_or_default()
+        );
+        Ok(scripts)
+    }
+
+    pub fn add(&self, addresses: impl IntoIterator<Item = bitcoin::Address>) -> Result<(), Error> {
+        let mut insert = self
+            .db
+            .prepare("INSERT OR IGNORE INTO watch VALUES (?1, ?2)")?;
+        let mut rows = 0;
+        for addr in addresses {
+            rows += insert.execute((addr.to_string(), addr.script_pubkey().as_bytes()))?;
+        }
+        if rows > 0 {
+            info!("added {} new addresses to watch", rows);
+        }
+        Ok(())
     }
 
     pub fn db(&self) -> &rusqlite::Connection {
