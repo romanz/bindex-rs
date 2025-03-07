@@ -100,6 +100,7 @@ impl Cache {
 
     pub fn sync(&self, scripts: &HashSet<ScriptBuf>, index: &address::Index) -> Result<(), Error> {
         self.run(|| {
+            self.drop_stale_blocks(&index.chain)?;
             let mut new_locations = BTreeSet::new();
             let mut entries = 0;
             for script in scripts {
@@ -119,6 +120,40 @@ impl Cache {
             }
             Ok(())
         })
+    }
+
+    pub fn drop_stale_blocks(&self, chain: &Chain) -> Result<(), Error> {
+        let mut select = self
+            .db
+            .prepare("SELECT block_hash, block_height FROM headers ORDER BY block_height DESC")?;
+        let rows = select.query_map((), |row| {
+            let hash = bitcoin::BlockHash::from_byte_array(row.get(0)?);
+            let height: usize = row.get(1)?;
+            Ok((hash, height))
+        })?;
+
+        let mut to_delete = vec![];
+        for row in rows {
+            let (hash, height) = row?;
+            match chain.get_header(hash, height) {
+                Ok(_header) => break,
+                Err(err) => {
+                    warn!("reorg detected: {}", err);
+                    to_delete.push(hash);
+                }
+            }
+        }
+        if !to_delete.is_empty() {
+            let mut delete = self
+                .db
+                .prepare("DELETE FROM headers WHERE block_hash = ?1")?;
+            for blockhash in to_delete {
+                warn!("dropping block={} from cache", blockhash);
+                delete.execute((blockhash.as_byte_array(),))?;
+            }
+        }
+
+        Ok(())
     }
 
     fn sync_headers<'a>(
