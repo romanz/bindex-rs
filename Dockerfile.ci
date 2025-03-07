@@ -19,9 +19,9 @@ RUN cargo build --release --locked --all
 
 # Copy the binaries into runner image
 FROM base AS runner
-COPY --from=builder /build/target/release/bindex /usr/local/bin/bindex
+COPY --from=builder /build/target/release/bindex-cli /usr/local/bin/bindex-cli
 
 WORKDIR /
 
 # Sanity check
-RUN bindex --version
+RUN bindex-cli --version

@@ -44,12 +44,12 @@ jobs:
       run: |
         cargo build --release --all --locked --timings
         mv -v target/cargo-timings/cargo-timing-*.html .
-        mv -v target/release/bindex /usr/local/bin/bindex
+        mv -v target/release/bindex-cli /usr/local/bin/
 
     - name: Sanity
       run: |
-        bindex --version  # make sure it can run
-        bindex --help
+        bindex-cli --version  # make sure it can run
+        bindex-cli --help
 
     - name: Test
       run: cargo test --release --all --locked
@@ -76,4 +76,6 @@ jobs:
       - name: Build
         run: docker build -f Dockerfile.ci . -t bindex:latest
       - name: Sanity
-        run: docker run --rm bindex:latest bindex --version
+        run: |
+          docker run --rm bindex:latest bindex-cli --version
+          docker run --rm bindex:latest bindex-cli --help

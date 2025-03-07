@@ -101,26 +101,17 @@ version = "0.0.6"
 dependencies = [
  "bitcoin",
  "bitcoin_slices",
+ "chrono",
+ "clap",
+ "env_logger",
  "hex",
  "hex_lit",
  "log",
  "rocksdb",
  "rusqlite",
+ "tabled",
  "thiserror",
  "ureq",
-]
-
-[[package]]
-name = "bindex-cli"
-version = "0.0.6"
-dependencies = [
- "bindex",
- "chrono",
- "clap",
- "env_logger",
- "log",
- "rusqlite",
- "tabled",
 ]
 
 [[package]]

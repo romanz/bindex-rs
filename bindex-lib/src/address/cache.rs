@@ -5,7 +5,11 @@ use bitcoin_slices::{bsl, Parse};
 use log::*;
 use rusqlite::OptionalExtension;
 
-use crate::{address, Location, ScriptHash};
+use crate::{
+    address,
+    chain::{Chain, Location},
+    index::ScriptHash,
+};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -140,7 +144,7 @@ impl Cache {
 
     fn sync_history<'a>(
         &self,
-        script_hash: &crate::ScriptHash,
+        script_hash: &ScriptHash,
         index: &'a address::Index,
         new_locations: &mut BTreeSet<Location<'a>>,
     ) -> Result<usize, Error> {
@@ -206,8 +210,8 @@ impl Cache {
 
     fn latest_location<'a>(
         &'a self,
-        script_hash: &crate::ScriptHash,
-        chain: &'a crate::Chain,
+        script_hash: &ScriptHash,
+        chain: &'a Chain,
     ) -> Result<Option<Location<'a>>, Error> {
         let mut stmt = self.db.prepare(
             r"

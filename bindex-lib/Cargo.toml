@@ -1,0 +1,26 @@
+[package]
+name = "bindex"
+version = "0.0.6"
+edition = "2021"
+authors = ["Roman Zeyde <me@romanzey.de>"]
+description = "Bitcoin indexing library in Rust"
+license = "MIT"
+homepage = "https://github.com/romanz/bindex-rs"
+repository = "https://github.com/romanz/bindex-rs"
+keywords = ["bitcoin", "index", "database"]
+documentation = "https://docs.rs/bindex/"
+readme = "README.md"
+
+
+[dependencies]
+bitcoin = { version = "0.32", default-features = false }
+bitcoin_slices = { version = "0.10", features = ["bitcoin"] }
+hex = "0.4"
+log = "0.4"
+rocksdb = { version = "0.23", default-features = false, features = ["zstd"]}
+thiserror = "2.0"
+ureq = { version = "3", default-features = false }
+rusqlite = "0.34"
+
+[dev-dependencies]
+hex_lit = "0.1"

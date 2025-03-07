@@ -5,8 +5,8 @@ use std::path::Path;
 use log::*;
 
 use crate::{
-    chain::{self, Location},
-    client, db, index, Chain,
+    chain::{self, Chain, Location},
+    client, db, index,
 };
 
 #[derive(thiserror::Error, Debug)]

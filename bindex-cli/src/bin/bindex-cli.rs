@@ -7,9 +7,11 @@ use std::{
     time::Instant,
 };
 
-use bindex::{address, address::cache, Chain, Location};
-
-use bitcoin::{consensus::deserialize, hashes::Hash, BlockHash, ScriptBuf, Txid};
+use bindex::{
+    address::{self, cache},
+    bitcoin::{self, consensus::deserialize, hashes::Hash, BlockHash, ScriptBuf, Txid},
+    Chain, Location,
+};
 use chrono::{TimeZone, Utc};
 use clap::{Parser, ValueEnum};
 use log::*;
