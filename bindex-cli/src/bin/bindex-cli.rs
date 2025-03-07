@@ -9,8 +9,7 @@ use std::{
 
 use bindex::{
     address::{self, cache},
-    bitcoin::{self, consensus::deserialize, hashes::Hash, BlockHash, ScriptBuf, Txid},
-    Chain, Location,
+    bitcoin::{self, consensus::deserialize, hashes::Hash, ScriptBuf, Txid},
 };
 use chrono::{TimeZone, Utc};
 use clap::{Parser, ValueEnum};
@@ -44,35 +43,26 @@ impl Entry {
     }
 }
 
-fn get_history(
-    db: &rusqlite::Connection,
-    scripts: &HashSet<ScriptBuf>,
-    chain: &Chain,
-) -> Result<Vec<Entry>> {
+fn get_history(db: &rusqlite::Connection, scripts: &HashSet<ScriptBuf>) -> Result<Vec<Entry>> {
     let t = Instant::now();
 
     let mut stmt = db.prepare(
         r"
-        SELECT block_hash, block_offset, block_height, tx_id, tx_bytes
+        SELECT header_bytes, block_offset, block_height, tx_id, tx_bytes
         FROM transactions INNER JOIN headers USING (block_hash)
         ORDER BY block_height ASC, block_offset ASC",
     )?;
     let results = stmt.query_map([], |row| {
-        let blockhash = BlockHash::from_byte_array(row.get(0)?);
-        let offset: u64 = row.get(1)?;
-        let height: usize = row.get(2)?;
-
-        let location = Location {
-            height,
-            offset,
-            indexed_header: chain.get_header(blockhash, height).expect("TODO reorg"),
-        };
-
+        let header_bytes: Vec<u8> = row.get(0)?;
+        let block_offset: u64 = row.get(1)?;
+        let block_height: usize = row.get(2)?;
         let txid = Txid::from_byte_array(row.get(3)?);
         let tx_bytes: Vec<u8> = row.get(4)?;
+
         let tx: bitcoin::Transaction = deserialize(&tx_bytes).expect("bad tx bytes");
+        let header: bitcoin::block::Header = deserialize(&header_bytes).expect("bad header bytes");
         assert_eq!(txid, tx.compute_txid());
-        Ok((location, txid, tx_bytes, tx))
+        Ok((txid, tx_bytes, tx, header, block_height, block_offset))
     })?;
 
     let mut unspent = HashMap::<bitcoin::OutPoint, bitcoin::Amount>::new();
@@ -81,7 +71,7 @@ fn get_history(
 
     let mut entries = vec![];
     for res in results {
-        let (loc, txid, tx_bytes, tx) = res?;
+        let (txid, tx_bytes, tx, header, block_height, block_offset) = res?;
 
         let mut delta = bitcoin::SignedAmount::ZERO;
         let mut skip_tx = true;
@@ -108,13 +98,9 @@ fn get_history(
         byte_size += tx_bytes.len();
         entries.push(Entry {
             txid: txid.to_string(),
-            time: format!(
-                "{}",
-                Utc.timestamp_opt(loc.indexed_header.header().time.into(), 0)
-                    .unwrap()
-            ),
-            height: loc.height.to_string(),
-            offset: loc.offset.to_string(),
+            time: format!("{}", Utc.timestamp_opt(header.time.into(), 0).unwrap()),
+            height: block_height.to_string(),
+            offset: block_offset.to_string(),
             delta: format!("{:+.8}", delta.to_btc()),
             balance: format!("{:.8}", balance.to_btc()),
             bytes: tx_bytes.len().to_string(),
@@ -266,7 +252,7 @@ fn main() -> Result<()> {
         }
         if updated && !scripts.is_empty() {
             cache.sync(&scripts, &index)?;
-            let entries = get_history(cache.db(), &scripts, index.chain())?;
+            let entries = get_history(cache.db(), &scripts)?;
             print_history(entries, args.history_limit);
         }
         updated = false;

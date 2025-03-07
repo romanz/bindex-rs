@@ -56,14 +56,12 @@ impl Chain {
     }
 
     pub fn get_header(&self, hash: BlockHash, height: usize) -> Result<&index::Header, Reorg> {
-        let header = match self.rows.get(height) {
-            Some(h) => h,
-            None => return Err(Reorg::Missing(hash, height)),
-        };
-        if header.hash() != hash {
-            return Err(Reorg::Stale(hash, height));
+        let header = self.rows.get(height).ok_or(Reorg::Missing(hash, height))?;
+        if header.hash() == hash {
+            Ok(header)
+        } else {
+            Err(Reorg::Stale(hash, height))
         }
-        Ok(header)
     }
 
     pub fn find_by_txpos(&self, txpos: &index::TxPos) -> Option<Location> {

@@ -7,7 +7,7 @@ use rusqlite::OptionalExtension;
 
 use crate::{
     address,
-    chain::{Chain, Location},
+    chain::{self, Chain, Location},
     index::ScriptHash,
 };
 
@@ -21,6 +21,9 @@ pub enum Error {
 
     #[error("parse failed: {0}")]
     Address(#[from] bitcoin::address::ParseError),
+
+    #[error("block not found: {0}")]
+    BlockNotFound(#[from] chain::Reorg),
 }
 
 pub struct Cache {
@@ -51,15 +54,6 @@ impl Cache {
     fn create_tables(&self) -> Result<(), Error> {
         self.db.execute(
             r"
-            CREATE TABLE IF NOT EXISTS watch (
-                address TEXT NOT NULL,
-                script BLOB NOT NULL,
-                PRIMARY KEY (address)
-            ) WITHOUT ROWID",
-            (),
-        )?;
-        self.db.execute(
-            r"
             CREATE TABLE IF NOT EXISTS headers (
                 block_hash BLOB NOT NULL,
                 block_height INTEGER,
@@ -76,18 +70,28 @@ impl Cache {
                 tx_id BLOB,
                 tx_bytes BLOB,
                 PRIMARY KEY (block_hash, block_offset)
-                FOREIGN KEY (block_hash) REFERENCES headers (block_hash)
+                FOREIGN KEY (block_hash) REFERENCES headers (block_hash) ON DELETE CASCADE
             ) WITHOUT ROWID",
             (),
         )?;
         self.db.execute(
             r"
             CREATE TABLE IF NOT EXISTS history (
-                script_hash BLOB NOT NULL,
+                script_hash BLOB NOT NULL REFERENCES watch (script_hash) ON DELETE CASCADE,
                 block_hash BLOB NOT NULL,
                 block_offset INTEGER NOT NULL,
                 PRIMARY KEY (script_hash, block_hash, block_offset)
-                FOREIGN KEY (block_hash, block_offset) REFERENCES transactions (block_hash, block_offset)
+                FOREIGN KEY (block_hash, block_offset) REFERENCES transactions (block_hash, block_offset) ON DELETE CASCADE
+            ) WITHOUT ROWID",
+            (),
+        )?;
+        self.db.execute(
+            r"
+            CREATE TABLE IF NOT EXISTS watch (
+                script_hash BLOB NOT NULL,
+                script_bytes BLOB NOT NULL,
+                address TEXT NOT NULL,
+                PRIMARY KEY (script_hash)
             ) WITHOUT ROWID",
             (),
         )?;
@@ -221,22 +225,28 @@ impl Cache {
             ORDER BY block_height DESC
             LIMIT 1",
         )?;
-        Ok(stmt
+        let res = stmt
             .query_row([script_hash.as_byte_array()], |row| {
                 let blockhash = bitcoin::BlockHash::from_byte_array(row.get(0)?);
                 let height: usize = row.get(1)?;
                 let offset: u64 = row.get(2)?;
-                Ok(Location {
-                    height,
-                    offset,
-                    indexed_header: chain.get_header(blockhash, height).expect("TODO reorg"),
-                })
+                Ok((blockhash, height, offset))
             })
-            .optional()?)
+            .optional()?;
+
+        res.map(|(blockhash, height, offset)| {
+            let indexed_header = chain.get_header(blockhash, height)?;
+            Ok(Location {
+                height,
+                offset,
+                indexed_header,
+            })
+        })
+        .transpose()
     }
 
     pub fn scripts(&self) -> Result<HashSet<ScriptBuf>, Error> {
-        let mut select = self.db.prepare("SELECT script FROM watch")?;
+        let mut select = self.db.prepare("SELECT script_bytes FROM watch")?;
         let blobs = select.query_map([], |row| row.get::<_, Vec<u8>>(0))?;
         let scripts = blobs
             .map(|blob| Ok(ScriptBuf::from_bytes(blob?)))
@@ -252,10 +262,16 @@ impl Cache {
     pub fn add(&self, addresses: impl IntoIterator<Item = bitcoin::Address>) -> Result<(), Error> {
         let mut insert = self
             .db
-            .prepare("INSERT OR IGNORE INTO watch VALUES (?1, ?2)")?;
+            .prepare("INSERT OR IGNORE INTO watch VALUES (?1, ?2, ?3)")?;
         let mut rows = 0;
         for addr in addresses {
-            rows += insert.execute((addr.to_string(), addr.script_pubkey().as_bytes()))?;
+            let script = addr.script_pubkey();
+            let script_hash = ScriptHash::new(&script);
+            rows += insert.execute((
+                script_hash.as_byte_array(),
+                script.as_bytes(),
+                addr.to_string(),
+            ))?;
         }
         if rows > 0 {
             info!("added {} new addresses to watch", rows);

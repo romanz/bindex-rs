@@ -139,7 +139,7 @@ impl Index {
         Ok(stats)
     }
 
-    pub fn find_locations(
+    fn find_locations(
         &self,
         script_hash: &index::ScriptHash,
         from: index::TxPos,
@@ -151,13 +151,13 @@ impl Index {
             .map(|txpos| self.chain.find_by_txpos(&txpos).expect("invalid position")))
     }
 
-    pub fn get_tx_bytes(&self, location: &Location) -> Result<Vec<u8>, Error> {
+    fn get_tx_bytes(&self, location: &Location) -> Result<Vec<u8>, Error> {
         Ok(self
             .client
             .get_tx_bytes_from_block(location.indexed_header.hash(), location.offset)?)
     }
 
-    pub fn chain(&self) -> &Chain {
+    fn chain(&self) -> &Chain {
         &self.chain
     }
 }
