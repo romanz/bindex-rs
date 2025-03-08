@@ -62,7 +62,7 @@ fn get_history(db: &rusqlite::Connection) -> Result<Vec<Entry>> {
     let mut stmt = db.prepare(
         r"
         SELECT header_bytes, block_offset, block_height, tx_id, tx_bytes
-        FROM transactions INNER JOIN headers USING (block_hash)
+        FROM transactions INNER JOIN headers USING (block_height)
         ORDER BY block_height ASC, block_offset ASC",
     )?;
     let results = stmt.query_map([], |row| {

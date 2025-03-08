@@ -55,22 +55,23 @@ impl Cache {
         self.db.execute(
             r"
             CREATE TABLE IF NOT EXISTS headers (
+                block_height INTEGER NOT NULL,
                 block_hash BLOB NOT NULL,
-                block_height INTEGER,
-                header_bytes BLOB,
-                PRIMARY KEY (block_hash)
+                header_bytes BLOB NOT NULL,
+                PRIMARY KEY (block_height),
+                UNIQUE (block_hash)
             ) WITHOUT ROWID",
             (),
         )?;
         self.db.execute(
             r"
             CREATE TABLE IF NOT EXISTS transactions (
-                block_hash BLOB NOT NULL,
+                block_height INTEGER NOT NULL,
                 block_offset INTEGER NOT NULL,
                 tx_id BLOB,
                 tx_bytes BLOB,
-                PRIMARY KEY (block_hash, block_offset)
-                FOREIGN KEY (block_hash) REFERENCES headers (block_hash) ON DELETE CASCADE
+                PRIMARY KEY (block_height, block_offset)
+                FOREIGN KEY (block_height) REFERENCES headers (block_height) ON DELETE CASCADE
             ) WITHOUT ROWID",
             (),
         )?;
@@ -78,10 +79,10 @@ impl Cache {
             r"
             CREATE TABLE IF NOT EXISTS history (
                 script_hash BLOB NOT NULL REFERENCES watch (script_hash) ON DELETE CASCADE,
-                block_hash BLOB NOT NULL,
+                block_height INTEGER NOT NULL,
                 block_offset INTEGER NOT NULL,
-                PRIMARY KEY (script_hash, block_hash, block_offset)
-                FOREIGN KEY (block_hash, block_offset) REFERENCES transactions (block_hash, block_offset) ON DELETE CASCADE
+                PRIMARY KEY (script_hash, block_height, block_offset)
+                FOREIGN KEY (block_height, block_offset) REFERENCES transactions (block_height, block_offset) ON DELETE CASCADE
             ) WITHOUT ROWID",
             (),
         )?;
@@ -127,28 +128,23 @@ impl Cache {
             let height: usize = row.get(1)?;
             Ok((hash, height))
         })?;
-
-        let mut to_delete = vec![];
+        let mut delete_from = None;
         for row in rows {
             let (hash, height) = row?;
             match chain.get_header(hash, height) {
                 Ok(_header) => break,
                 Err(err) => {
                     warn!("reorg detected: {}", err);
-                    to_delete.push(hash);
+                    delete_from = Some(height);
                 }
             }
         }
-        if !to_delete.is_empty() {
+        if let Some(height) = delete_from {
             let mut delete = self
                 .db
-                .prepare("DELETE FROM headers WHERE block_hash = ?1")?;
-            for blockhash in to_delete {
-                warn!("dropping block={} from cache", blockhash);
-                delete.execute((blockhash.as_byte_array(),))?;
-            }
+                .prepare("DELETE FROM headers WHERE block_height >= ?1")?;
+            delete.execute([height])?;
         }
-
         Ok(())
     }
 
@@ -172,7 +168,7 @@ impl Cache {
         let mut rows = 0;
         for (height, block_hash, header) in headers {
             let header_bytes = serialize(header);
-            rows += insert.execute((block_hash.as_byte_array(), height, header_bytes))?;
+            rows += insert.execute((height, block_hash.as_byte_array(), header_bytes))?;
         }
         Ok(rows)
     }
@@ -209,12 +205,9 @@ impl Cache {
         index
             .find_locations(script_hash, from)?
             .map(|loc| {
-                let block_hash = loc.indexed_header.hash();
-                let inserted = stmt.execute((
-                    script_hash.as_byte_array(),
-                    block_hash.as_byte_array(),
-                    loc.offset,
-                ))?;
+                let block_height = loc.height;
+                let inserted =
+                    stmt.execute((script_hash.as_byte_array(), block_height, loc.offset))?;
                 if inserted > 0 {
                     new_locations.insert(loc);
                 }
@@ -230,29 +223,24 @@ impl Cache {
     ) -> Result<usize, Error> {
         let mut insert = self.db.prepare(
             r"
-            INSERT OR IGNORE INTO transactions(block_hash, block_offset)
+            INSERT OR IGNORE INTO transactions(block_height, block_offset)
             VALUES (?1, ?2)",
         )?;
         let mut update = self.db.prepare(
             r"
                 UPDATE transactions SET tx_bytes = ?3, tx_id = ?4
-                WHERE block_hash = ?1 AND block_offset = ?2",
+                WHERE block_height = ?1 AND block_offset = ?2",
         )?;
         let mut rows = 0;
         for loc in locations {
-            let block_hash = loc.indexed_header.hash();
-            let inserted = insert.execute((block_hash.as_byte_array(), loc.offset))?;
+            let block_height = loc.height;
+            let inserted = insert.execute((block_height, loc.offset))?;
             if inserted > 0 {
                 // fetch transaction bytes only if needed
                 let tx_bytes = index.get_tx_bytes(loc).expect("missing tx bytes");
                 let parsed = bsl::Transaction::parse(&tx_bytes).expect("invalid tx");
                 let txid = Txid::from(parsed.parsed().txid());
-                update.execute((
-                    block_hash.as_byte_array(),
-                    loc.offset,
-                    tx_bytes,
-                    txid.as_byte_array(),
-                ))?;
+                update.execute((block_height, loc.offset, tx_bytes, txid.as_byte_array()))?;
                 rows += inserted;
             }
         }
@@ -267,7 +255,7 @@ impl Cache {
         let mut stmt = self.db.prepare(
             r"
             SELECT block_hash, block_height, block_offset
-            FROM history INNER JOIN headers USING (block_hash)
+            FROM history INNER JOIN headers USING (block_height)
             WHERE script_hash = ?1
             ORDER BY block_height DESC
             LIMIT 1",
