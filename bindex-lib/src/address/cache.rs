@@ -8,7 +8,7 @@ use rusqlite::OptionalExtension;
 use crate::{
     address,
     chain::{self, Chain, Location},
-    index::ScriptHash,
+    index::{self, ScriptHash},
 };
 
 #[derive(thiserror::Error, Debug)]
@@ -198,10 +198,10 @@ impl Cache {
         let mut stmt = self.db.prepare("INSERT INTO history VALUES (?1, ?2, ?3)")?;
 
         let chain = index.chain();
-        let from = match self.latest_location(script_hash, chain)? {
-            Some(loc) => loc.indexed_header.next_txpos(),
-            None => Default::default(),
-        };
+        let from = self
+            .last_indexed_header(script_hash, chain)?
+            .map(index::Header::next_txpos)
+            .unwrap_or_default();
         index
             .find_locations(script_hash, from)?
             .map(|loc| {
@@ -247,36 +247,26 @@ impl Cache {
         Ok(rows)
     }
 
-    fn latest_location<'a>(
-        &'a self,
+    fn last_indexed_header<'a>(
+        &self,
         script_hash: &ScriptHash,
         chain: &'a Chain,
-    ) -> Result<Option<Location<'a>>, Error> {
+    ) -> Result<Option<&'a index::Header>, Error> {
         let mut stmt = self.db.prepare(
             r"
-            SELECT block_hash, block_height, block_offset
+            SELECT block_hash, block_height
             FROM history INNER JOIN headers USING (block_height)
             WHERE script_hash = ?1
             ORDER BY block_height DESC
             LIMIT 1",
         )?;
-        let res = stmt
-            .query_row([script_hash.as_byte_array()], |row| {
-                let blockhash = bitcoin::BlockHash::from_byte_array(row.get(0)?);
-                let height: usize = row.get(1)?;
-                let offset: u64 = row.get(2)?;
-                Ok((blockhash, height, offset))
-            })
-            .optional()?;
-
-        res.map(|(blockhash, height, offset)| {
-            let indexed_header = chain.get_header(blockhash, height)?;
-            Ok(Location {
-                height,
-                offset,
-                indexed_header,
-            })
+        stmt.query_row([script_hash.as_byte_array()], |row| {
+            let blockhash = bitcoin::BlockHash::from_byte_array(row.get(0)?);
+            let height: usize = row.get(1)?;
+            Ok((blockhash, height))
         })
+        .optional()?
+        .map(|(blockhash, height)| Ok(chain.get_header(blockhash, height)?))
         .transpose()
     }
 
