@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashSet};
 
-use bitcoin::{consensus::serialize, hashes::Hash, ScriptBuf, Txid};
+use bitcoin::{consensus::serialize, hashes::Hash, Txid};
 use bitcoin_slices::{bsl, Parse};
 use log::*;
 use rusqlite::OptionalExtension;
@@ -98,15 +98,11 @@ impl Cache {
         Ok(())
     }
 
-    pub fn sync(&self, scripts: &HashSet<ScriptBuf>, index: &address::Index) -> Result<(), Error> {
+    pub fn sync(&self, index: &address::Index) -> Result<(), Error> {
         self.run(|| {
             self.drop_stale_blocks(&index.chain)?;
             let mut new_locations = BTreeSet::new();
-            let mut entries = 0;
-            for script in scripts {
-                let script_hash = ScriptHash::new(script);
-                entries += self.sync_history(&script_hash, index, &mut new_locations)?;
-            }
+            let entries = self.sync_history(index, &mut new_locations)?;
             let headers = self.sync_headers(new_locations.iter())?;
             let transactions = self.sync_transactions(&new_locations, index)?;
             if entries > 0 || transactions > 0 || headers > 0 {
@@ -182,6 +178,22 @@ impl Cache {
     }
 
     fn sync_history<'a>(
+        &self,
+        index: &'a address::Index,
+        new_locations: &mut BTreeSet<Location<'a>>,
+    ) -> Result<usize, Error> {
+        let mut stmt = self.db.prepare("SELECT script_hash FROM watch")?;
+        let results = stmt.query_map((), |row| Ok(ScriptHash::from_byte_array(row.get(0)?)))?;
+
+        let mut rows = 0;
+        for res in results {
+            let script_hash = res?;
+            rows += self.sync_script_hash_history(&script_hash, index, new_locations)?;
+        }
+        Ok(rows)
+    }
+
+    fn sync_script_hash_history<'a>(
         &self,
         script_hash: &ScriptHash,
         index: &'a address::Index,
@@ -278,20 +290,6 @@ impl Cache {
             })
         })
         .transpose()
-    }
-
-    pub fn scripts(&self) -> Result<HashSet<ScriptBuf>, Error> {
-        let mut select = self.db.prepare("SELECT script_bytes FROM watch")?;
-        let blobs = select.query_map([], |row| row.get::<_, Vec<u8>>(0))?;
-        let scripts = blobs
-            .map(|blob| Ok(ScriptBuf::from_bytes(blob?)))
-            .collect::<Result<HashSet<_>, Error>>()?;
-        info!(
-            "watching {} addresses from '{}'",
-            scripts.len(),
-            self.db.path().unwrap_or_default()
-        );
-        Ok(scripts)
     }
 
     pub fn add(&self, addresses: impl IntoIterator<Item = bitcoin::Address>) -> Result<(), Error> {

@@ -43,8 +43,21 @@ impl Entry {
     }
 }
 
-fn get_history(db: &rusqlite::Connection, scripts: &HashSet<ScriptBuf>) -> Result<Vec<Entry>> {
+fn get_scripts(db: &rusqlite::Connection) -> Result<HashSet<ScriptBuf>> {
+    let mut select = db.prepare("SELECT script_bytes FROM watch")?;
+    let blobs = select.query_map([], |row| row.get::<_, Vec<u8>>(0))?;
+    blobs
+        .map(|blob| Ok(ScriptBuf::from_bytes(blob?)))
+        .collect::<Result<HashSet<_>>>()
+}
+
+fn get_history(db: &rusqlite::Connection) -> Result<Vec<Entry>> {
     let t = Instant::now();
+
+    let scripts = get_scripts(db)?;
+    if scripts.is_empty() {
+        return Ok(vec![]);
+    }
 
     let mut stmt = db.prepare(
         r"
@@ -243,16 +256,15 @@ fn main() -> Result<()> {
     let cache = cache::Cache::open(cache_db)?;
     cache.add(collect_addresses(&args)?)?;
 
-    let scripts = cache.scripts()?;
     let mut index = open_index(&args)?;
     let mut updated = true; // to sync the cache on first iteration
     loop {
         while index.sync_chain(1000)?.indexed_blocks > 0 {
             updated = true;
         }
-        if updated && !scripts.is_empty() {
-            cache.sync(&scripts, &index)?;
-            let entries = get_history(cache.db(), &scripts)?;
+        if updated {
+            cache.sync(&index)?;
+            let entries = get_history(cache.db())?;
             print_history(entries, args.history_limit);
         }
         updated = false;
