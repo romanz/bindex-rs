@@ -1,6 +1,6 @@
 [package]
 name = "bindex"
-version = "0.0.6"
+version = "0.0.7"
 edition = "2021"
 authors = ["Roman Zeyde <me@romanzey.de>"]
 description = "Bitcoin indexing library in Rust"
