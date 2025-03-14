@@ -45,10 +45,10 @@ impl Entry {
 
 fn get_scripts(db: &rusqlite::Connection) -> Result<HashSet<ScriptBuf>> {
     let mut select = db.prepare("SELECT script_bytes FROM watch")?;
-    let blobs = select.query_map([], |row| row.get::<_, Vec<u8>>(0))?;
-    blobs
-        .map(|blob| Ok(ScriptBuf::from_bytes(blob?)))
-        .collect::<Result<HashSet<_>>>()
+    let scripts = select
+        .query([])?
+        .and_then(|row| Ok(ScriptBuf::from_bytes(row.get(0)?)));
+    scripts.collect()
 }
 
 fn get_history(db: &rusqlite::Connection) -> Result<Vec<Entry>> {
@@ -59,67 +59,68 @@ fn get_history(db: &rusqlite::Connection) -> Result<Vec<Entry>> {
         return Ok(vec![]);
     }
 
-    let mut stmt = db.prepare(
+    let mut select = db.prepare(
         r"
         SELECT header_bytes, block_offset, block_height, tx_id, tx_bytes
         FROM transactions INNER JOIN headers USING (block_height)
         ORDER BY block_height ASC, block_offset ASC",
     )?;
-    let results = stmt.query_map([], |row| {
-        let header_bytes: Vec<u8> = row.get(0)?;
-        let block_offset: u64 = row.get(1)?;
-        let block_height: usize = row.get(2)?;
-        let txid = Txid::from_byte_array(row.get(3)?);
-        let tx_bytes: Vec<u8> = row.get(4)?;
-
-        let tx: bitcoin::Transaction = deserialize(&tx_bytes).expect("bad tx bytes");
-        let header: bitcoin::block::Header = deserialize(&header_bytes).expect("bad header bytes");
-        assert_eq!(txid, tx.compute_txid());
-        Ok((txid, tx_bytes, tx, header, block_height, block_offset))
-    })?;
 
     let mut unspent = HashMap::<bitcoin::OutPoint, bitcoin::Amount>::new();
     let mut balance = bitcoin::SignedAmount::ZERO;
     let mut byte_size = 0;
 
-    let mut entries = vec![];
-    for res in results {
-        let (txid, tx_bytes, tx, header, block_height, block_offset) = res?;
+    let entries = select
+        .query([])?
+        .and_then(|row| -> Result<Option<Entry>> {
+            let header_bytes: Vec<u8> = row.get(0)?;
+            let block_offset: u64 = row.get(1)?;
+            let block_height: usize = row.get(2)?;
+            let txid = Txid::from_byte_array(row.get(3)?);
+            let tx_bytes: Vec<u8> = row.get(4)?;
 
-        let mut delta = bitcoin::SignedAmount::ZERO;
-        let mut skip_tx = true;
-        for txi in tx.input {
-            if let Some(spent) = unspent.remove(&txi.previous_output) {
-                delta -= spent.to_signed().expect("spent overflow");
-                skip_tx = false;
+            let tx: bitcoin::Transaction = deserialize(&tx_bytes).expect("bad tx bytes");
+            let header: bitcoin::block::Header =
+                deserialize(&header_bytes).expect("bad header bytes");
+            assert_eq!(txid, tx.compute_txid());
+
+            let mut delta = bitcoin::SignedAmount::ZERO;
+            let mut skip_tx = true;
+            for txi in tx.input {
+                if let Some(spent) = unspent.remove(&txi.previous_output) {
+                    delta -= spent.to_signed().expect("spent overflow");
+                    skip_tx = false;
+                }
             }
-        }
-        for (n, txo) in tx.output.into_iter().enumerate() {
-            if scripts.contains(txo.script_pubkey.as_script()) {
-                delta += txo.value.to_signed().expect("txo.value overflow");
-                unspent.insert(
-                    bitcoin::OutPoint::new(txid, n.try_into().unwrap()),
-                    txo.value,
-                );
-                skip_tx = false;
+            for (n, txo) in tx.output.into_iter().enumerate() {
+                if scripts.contains(txo.script_pubkey.as_script()) {
+                    delta += txo.value.to_signed().expect("txo.value overflow");
+                    unspent.insert(
+                        bitcoin::OutPoint::new(txid, n.try_into().unwrap()),
+                        txo.value,
+                    );
+                    skip_tx = false;
+                }
             }
-        }
-        if skip_tx {
-            continue;
-        }
-        balance += delta;
-        byte_size += tx_bytes.len();
-        entries.push(Entry {
-            txid: txid.to_string(),
-            time: format!("{}", Utc.timestamp_opt(header.time.into(), 0).unwrap()),
-            height: block_height.to_string(),
-            offset: block_offset.to_string(),
-            delta: format!("{:+.8}", delta.to_btc()),
-            balance: format!("{:.8}", balance.to_btc()),
-            bytes: tx_bytes.len().to_string(),
-        });
-    }
-    let dt = t.elapsed();
+            Ok(if skip_tx {
+                None
+            } else {
+                balance += delta;
+                byte_size += tx_bytes.len();
+                Some(Entry {
+                    txid: txid.to_string(),
+                    time: format!("{}", Utc.timestamp_opt(header.time.into(), 0).unwrap()),
+                    height: block_height.to_string(),
+                    offset: block_offset.to_string(),
+                    delta: format!("{:+.8}", delta.to_btc()),
+                    balance: format!("{:.8}", balance.to_btc()),
+                    bytes: tx_bytes.len().to_string(),
+                })
+            })
+        })
+        .filter_map(Result::transpose)
+        .collect::<Result<Vec<Entry>>>()?;
+
     info!(
         "{} address history: {} transactions, balance: {}, UTXOs: {}, total: {:.6} MB [{:?}]",
         scripts.len(),
@@ -127,7 +128,7 @@ fn get_history(db: &rusqlite::Connection) -> Result<Vec<Entry>> {
         balance,
         unspent.len(),
         byte_size as f64 / 1e6,
-        dt,
+        t.elapsed(),
     );
     Ok(entries)
 }
