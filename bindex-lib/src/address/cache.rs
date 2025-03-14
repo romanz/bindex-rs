@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashSet};
+use std::{collections::BTreeSet, fmt::Debug};
 
 use bitcoin::{consensus::serialize, hashes::Hash, Txid};
 use bitcoin_slices::{bsl, Parse};
@@ -32,14 +32,18 @@ pub struct Cache {
 
 impl Cache {
     pub fn open(db: rusqlite::Connection) -> Result<Self, Error> {
+        // must be explicitly set outside a transaction - otherwise foreign keys constraints are ignored :(
+        // https://www.sqlite.org/pragma.html#pragma_foreign_keys
+        db.execute("PRAGMA foreign_keys = ON", ())?;
         let c = Cache { db };
-        c.run(|| c.create_tables())?;
+        c.run("create", || c.create_tables())?;
         Ok(c)
     }
 
-    fn run<T>(&self, f: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
+    fn run<T: Debug>(&self, op: &str, f: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
+        let start = std::time::Instant::now();
         self.db.execute("BEGIN", ())?;
-        match f() {
+        let res = match f() {
             Ok(v) => {
                 self.db.execute("COMMIT", ())?;
                 Ok(v)
@@ -48,7 +52,9 @@ impl Cache {
                 self.db.execute("ROLLBACK", ())?;
                 Err(e)
             }
-        }
+        };
+        debug!("DB {} took {:?}, result={:?}", op, start.elapsed(), res);
+        res
     }
 
     fn create_tables(&self) -> Result<(), Error> {
@@ -100,21 +106,27 @@ impl Cache {
     }
 
     pub fn sync(&self, index: &address::Index) -> Result<(), Error> {
-        self.run(|| {
+        self.run("sync", || {
             self.drop_stale_blocks(&index.chain)?;
-            let mut new_locations = BTreeSet::new();
-            let entries = self.sync_history(index, &mut new_locations)?;
-            let headers = self.sync_headers(new_locations.iter())?;
-            let transactions = self.sync_transactions(&new_locations, index)?;
-            if entries > 0 || transactions > 0 || headers > 0 {
+            let new_history = self.new_history(index)?;
+            let new_locations: BTreeSet<_> = new_history.iter().map(|(_, loc)| loc).collect();
+            let new_headers: BTreeSet<_> = new_locations
+                .iter()
+                .map(|&loc| (loc.height, loc.indexed_header))
+                .collect();
+            if !new_history.is_empty() {
                 info!(
                     "added {} history entries, {} transactions, {} headers to cache={:?}",
-                    entries,
-                    transactions,
-                    headers,
+                    new_history.len(),
+                    new_locations.len(),
+                    new_headers.len(),
                     self.db.path().unwrap_or("")
                 );
             }
+
+            self.sync_headers(new_headers.into_iter())?;
+            self.sync_transactions(new_locations.into_iter(), index)?;
+            self.sync_history(new_history.into_iter())?;
             Ok(())
         })
     }
@@ -148,101 +160,82 @@ impl Cache {
         Ok(())
     }
 
+    fn new_history<'a>(
+        &self,
+        index: &'a address::Index,
+    ) -> Result<BTreeSet<(ScriptHash, Location<'a>)>, Error> {
+        let mut stmt = self.db.prepare("SELECT script_hash FROM watch")?;
+        let results = stmt.query_map((), |row| Ok(ScriptHash::from_byte_array(row.get(0)?)))?;
+
+        let mut history = BTreeSet::<(ScriptHash, Location<'a>)>::new();
+        for res in results {
+            let script_hash = res?;
+            self.new_history_for_script_hash(&script_hash, index, &mut history)?;
+        }
+        Ok(history)
+    }
+
+    fn new_history_for_script_hash<'a>(
+        &self,
+        script_hash: &ScriptHash,
+        index: &'a address::Index,
+        history: &mut BTreeSet<(ScriptHash, Location<'a>)>,
+    ) -> Result<(), Error> {
+        let chain = index.chain();
+        let from = self
+            .last_indexed_header(script_hash, chain)?
+            .map(index::Header::next_txpos)
+            .unwrap_or_default();
+        index.find_locations(script_hash, from)?.for_each(|loc| {
+            history.insert((*script_hash, loc));
+        });
+        Ok(())
+    }
+
     fn sync_headers<'a>(
         &self,
-        new_locations: impl Iterator<Item = &'a Location<'a>>,
+        entries: impl Iterator<Item = (usize, &'a index::Header)>,
     ) -> Result<usize, Error> {
-        let headers: HashSet<_> = new_locations
-            .map(|loc| {
-                (
-                    loc.height,
-                    loc.indexed_header.hash(),
-                    loc.indexed_header.header(),
-                )
-            })
-            .collect();
-
-        let mut insert = self
-            .db
-            .prepare("INSERT OR IGNORE INTO headers VALUES (?1, ?2, ?3)")?;
+        let mut insert = self.db.prepare("INSERT INTO headers VALUES (?1, ?2, ?3)")?;
         let mut rows = 0;
-        for (height, block_hash, header) in headers {
-            let header_bytes = serialize(header);
-            rows += insert.execute((height, block_hash.as_byte_array(), header_bytes))?;
+        for (height, header) in entries {
+            rows += insert.execute((
+                height,
+                header.hash().as_byte_array(),
+                serialize(header.header()),
+            ))?;
+        }
+        Ok(rows)
+    }
+
+    fn sync_transactions<'a>(
+        &self,
+        locations: impl Iterator<Item = &'a Location<'a>>,
+        index: &address::Index,
+    ) -> Result<usize, Error> {
+        let mut insert = self.db.prepare(
+            r"
+            INSERT INTO transactions(block_height, block_offset, tx_bytes, tx_id)
+            VALUES (?1, ?2, ?3, ?4)",
+        )?;
+        let mut rows = 0;
+        for loc in locations {
+            let tx_bytes = index.get_tx_bytes(loc).expect("missing tx bytes");
+            let parsed = bsl::Transaction::parse(&tx_bytes).expect("invalid tx");
+            let txid = Txid::from(parsed.parsed().txid()).to_byte_array();
+            rows += insert.execute((loc.height, loc.offset, tx_bytes, txid))?;
         }
         Ok(rows)
     }
 
     fn sync_history<'a>(
         &self,
-        index: &'a address::Index,
-        new_locations: &mut BTreeSet<Location<'a>>,
+        entries: impl Iterator<Item = (ScriptHash, Location<'a>)>,
     ) -> Result<usize, Error> {
-        let mut stmt = self.db.prepare("SELECT script_hash FROM watch")?;
-        let results = stmt.query_map((), |row| Ok(ScriptHash::from_byte_array(row.get(0)?)))?;
-
+        let mut insert = self.db.prepare("INSERT INTO history VALUES (?1, ?2, ?3)")?;
         let mut rows = 0;
-        for res in results {
-            let script_hash = res?;
-            rows += self.sync_script_hash_history(&script_hash, index, new_locations)?;
-        }
-        Ok(rows)
-    }
-
-    fn sync_script_hash_history<'a>(
-        &self,
-        script_hash: &ScriptHash,
-        index: &'a address::Index,
-        new_locations: &mut BTreeSet<Location<'a>>,
-    ) -> Result<usize, Error> {
-        let mut stmt = self.db.prepare("INSERT INTO history VALUES (?1, ?2, ?3)")?;
-
-        let chain = index.chain();
-        let from = self
-            .last_indexed_header(script_hash, chain)?
-            .map(index::Header::next_txpos)
-            .unwrap_or_default();
-        index
-            .find_locations(script_hash, from)?
-            .map(|loc| {
-                let block_height = loc.height;
-                let inserted =
-                    stmt.execute((script_hash.as_byte_array(), block_height, loc.offset))?;
-                if inserted > 0 {
-                    new_locations.insert(loc);
-                }
-                Ok(inserted)
-            })
-            .sum()
-    }
-
-    fn sync_transactions(
-        &self,
-        locations: &BTreeSet<Location>,
-        index: &address::Index,
-    ) -> Result<usize, Error> {
-        let mut insert = self.db.prepare(
-            r"
-            INSERT OR IGNORE INTO transactions(block_height, block_offset)
-            VALUES (?1, ?2)",
-        )?;
-        let mut update = self.db.prepare(
-            r"
-                UPDATE transactions SET tx_bytes = ?3, tx_id = ?4
-                WHERE block_height = ?1 AND block_offset = ?2",
-        )?;
-        let mut rows = 0;
-        for loc in locations {
-            let block_height = loc.height;
-            let inserted = insert.execute((block_height, loc.offset))?;
-            if inserted > 0 {
-                // fetch transaction bytes only if needed
-                let tx_bytes = index.get_tx_bytes(loc).expect("missing tx bytes");
-                let parsed = bsl::Transaction::parse(&tx_bytes).expect("invalid tx");
-                let txid = Txid::from(parsed.parsed().txid());
-                update.execute((block_height, loc.offset, tx_bytes, txid.as_byte_array()))?;
-                rows += inserted;
-            }
+        for (script_hash, loc) in entries {
+            rows += insert.execute((script_hash.as_byte_array(), loc.height, loc.offset))?;
         }
         Ok(rows)
     }
