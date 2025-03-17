@@ -116,7 +116,7 @@ impl Cache {
                 .collect();
             if !new_history.is_empty() {
                 info!(
-                    "added {} history entries, {} transactions, {} headers to cache={:?}",
+                    "adding {} history entries, {} transactions, {} headers to cache={:?}",
                     new_history.len(),
                     new_locations.len(),
                     new_headers.len(),
