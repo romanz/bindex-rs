@@ -15,11 +15,17 @@ fn default_opts() -> rocksdb::Options {
     opts.create_missing_column_families(true);
     opts.set_compaction_style(rocksdb::DBCompactionStyle::Level);
     opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
-    // opts.set_target_file_size_base(256 << 20);
-    // opts.set_write_buffer_size(256 << 20);
     opts.set_max_open_files(256);
     opts.set_keep_log_file_num(10);
     opts.set_disable_auto_compactions(true);
+
+    let parallelism = std::thread::available_parallelism()
+        .ok()
+        .and_then(|v| u16::try_from(v.get()).ok())
+        .unwrap_or(2)
+        .clamp(1, 8);
+    opts.increase_parallelism(parallelism.into());
+    opts.set_max_subcompactions(parallelism.into());
     opts
 }
 
