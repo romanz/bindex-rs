@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     io::Read,
     path::{Path, PathBuf},
     str::FromStr,
@@ -25,7 +25,6 @@ struct Entry {
     offset: String,
     delta: String,
     balance: String,
-    bytes: String,
 }
 
 impl Entry {
@@ -38,7 +37,6 @@ impl Entry {
             offset: s.to_owned(),
             delta: s.to_owned(),
             balance: s.to_owned(),
-            bytes: s.to_owned(),
         }
     }
 }
@@ -61,15 +59,32 @@ fn get_history(db: &rusqlite::Connection) -> Result<Vec<Entry>> {
 
     let mut select = db.prepare(
         r"
-        SELECT header_bytes, block_offset, block_height, tx_id, tx_bytes
-        FROM transactions INNER JOIN headers USING (block_height)
-        ORDER BY block_height ASC, block_offset ASC",
+        WITH history_deltas AS (
+            SELECT
+                block_offset,
+                block_height,
+                sum((2*history.is_output - 1) * history.amount) AS delta
+            FROM history
+            GROUP BY 1, 2
+        )
+        SELECT
+            h.header_bytes,
+            t.block_offset,
+            t.block_height,
+            t.tx_id,
+            d.delta
+        FROM
+            history_deltas d, transactions t, headers h
+        WHERE
+            d.block_height = t.block_height AND
+            d.block_offset = t.block_offset AND
+            d.block_height = h.block_height
+        ORDER BY
+            d.block_height ASC,
+            d.block_offset ASC",
     )?;
 
-    let mut unspent = HashMap::<bitcoin::OutPoint, bitcoin::Amount>::new();
     let mut balance = bitcoin::SignedAmount::ZERO;
-    let mut byte_size = 0;
-
     let entries = select
         .query([])?
         .and_then(|row| -> Result<Option<Entry>> {
@@ -77,57 +92,32 @@ fn get_history(db: &rusqlite::Connection) -> Result<Vec<Entry>> {
             let block_offset: u64 = row.get(1)?;
             let block_height: usize = row.get(2)?;
             let txid = Txid::from_byte_array(row.get(3)?);
-            let tx_bytes: Vec<u8> = row.get(4)?;
-
-            let tx: bitcoin::Transaction = deserialize(&tx_bytes).expect("bad tx bytes");
+            let delta = bitcoin::SignedAmount::from_sat(row.get(4)?);
+            balance += delta;
             let header: bitcoin::block::Header =
                 deserialize(&header_bytes).expect("bad header bytes");
-            assert_eq!(txid, tx.compute_txid());
-
-            let mut delta = bitcoin::SignedAmount::ZERO;
-            let mut skip_tx = true;
-            for txi in tx.input {
-                if let Some(spent) = unspent.remove(&txi.previous_output) {
-                    delta -= spent.to_signed().expect("spent overflow");
-                    skip_tx = false;
-                }
-            }
-            for (n, txo) in tx.output.into_iter().enumerate() {
-                if scripts.contains(txo.script_pubkey.as_script()) {
-                    delta += txo.value.to_signed().expect("txo.value overflow");
-                    unspent.insert(
-                        bitcoin::OutPoint::new(txid, n.try_into().unwrap()),
-                        txo.value,
-                    );
-                    skip_tx = false;
-                }
-            }
-            Ok(if skip_tx {
-                None
-            } else {
-                balance += delta;
-                byte_size += tx_bytes.len();
-                Some(Entry {
-                    txid: txid.to_string(),
-                    time: format!("{}", Utc.timestamp_opt(header.time.into(), 0).unwrap()),
-                    height: block_height.to_string(),
-                    offset: block_offset.to_string(),
-                    delta: format!("{:+.8}", delta.to_btc()),
-                    balance: format!("{:.8}", balance.to_btc()),
-                    bytes: tx_bytes.len().to_string(),
-                })
-            })
+            Ok(Some(Entry {
+                txid: txid.to_string(),
+                time: format!("{}", Utc.timestamp_opt(header.time.into(), 0).unwrap()),
+                height: block_height.to_string(),
+                offset: block_offset.to_string(),
+                delta: format!("{:+.8}", delta.to_btc()),
+                balance: format!("{:.8}", balance.to_btc()),
+            }))
         })
         .filter_map(Result::transpose)
         .collect::<Result<Vec<Entry>>>()?;
 
+    let unspent: usize = db.query_row("SELECT sum(2 * is_output - 1) FROM history", [], |row| {
+        row.get(0)
+    })?;
+
     info!(
-        "{} address history: {} transactions, balance: {}, UTXOs: {}, total: {:.6} MB [{:?}]",
+        "{} address history: {} entries, balance: {}, UTXOs: {} [{:?}]",
         scripts.len(),
         entries.len(),
         balance,
-        unspent.len(),
-        byte_size as f64 / 1e6,
+        unspent,
         t.elapsed(),
     );
     Ok(entries)

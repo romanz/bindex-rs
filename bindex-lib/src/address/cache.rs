@@ -1,6 +1,10 @@
 use std::{collections::BTreeSet, fmt::Debug};
 
-use bitcoin::{consensus::serialize, hashes::Hash, Txid};
+use bitcoin::{
+    consensus::{deserialize, serialize},
+    hashes::Hash,
+    Txid,
+};
 use bitcoin_slices::{bsl, Parse};
 use log::*;
 use rusqlite::OptionalExtension;
@@ -76,7 +80,8 @@ impl Cache {
                 block_offset INTEGER NOT NULL,
                 tx_id BLOB,
                 tx_bytes BLOB,
-                PRIMARY KEY (block_height, block_offset)
+                PRIMARY KEY (block_height, block_offset),
+                UNIQUE (tx_id),
                 FOREIGN KEY (block_height) REFERENCES headers (block_height) ON DELETE CASCADE
             ) WITHOUT ROWID",
             (),
@@ -87,7 +92,10 @@ impl Cache {
                 script_hash BLOB NOT NULL REFERENCES watch (script_hash) ON DELETE CASCADE,
                 block_height INTEGER NOT NULL,
                 block_offset INTEGER NOT NULL,
-                PRIMARY KEY (script_hash, block_height, block_offset)
+                is_output BOOLEAN NOT NULL,     -- is it funding the address or not (= spending from it)
+                index_ INTEGER NOT NULL,        -- input/output index within a transaction
+                amount INTEGER NOT NULL,        -- in Satoshis
+                PRIMARY KEY (script_hash, block_height, block_offset, is_output, index_)
                 FOREIGN KEY (block_height, block_offset) REFERENCES transactions (block_height, block_offset) ON DELETE CASCADE
             ) WITHOUT ROWID",
             (),
@@ -232,10 +240,67 @@ impl Cache {
         &self,
         entries: impl Iterator<Item = (ScriptHash, Location<'a>)>,
     ) -> Result<usize, Error> {
-        let mut insert = self.db.prepare("INSERT INTO history VALUES (?1, ?2, ?3)")?;
+        let mut insert = self
+            .db
+            .prepare("INSERT INTO history VALUES (?1, ?2, ?3, ?4, ?5, ?6)")?;
         let mut rows = 0;
         for (script_hash, loc) in entries {
-            rows += insert.execute((script_hash.as_byte_array(), loc.height, loc.offset))?;
+            let tx: bitcoin::Transaction = self.db.query_row(
+                "SELECT tx_bytes FROM transactions WHERE block_height = ?1 AND block_offset = ?2",
+                (loc.height, loc.offset),
+                |row| {
+                    let tx_bytes: Vec<u8> = row.get(0)?;
+                    Ok(deserialize(&tx_bytes).expect("invalid tx"))
+                },
+            )?;
+            // Add spending entries
+            for (i, input) in tx.input.iter().enumerate() {
+                let prevout = input.previous_output;
+                // txid -> (height, offset)
+                let result = self
+                    .db
+                    .query_row(
+                        "SELECT block_height, block_offset FROM transactions WHERE tx_id = ?1",
+                        [prevout.txid.as_byte_array()],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?;
+                let (height, offset): (usize, usize) = match result {
+                    Some(v) => v,
+                    None => continue,
+                };
+                // (script_hash, height, offset, `true`, index) -> amount
+                let result: Option<u64> = self.db.query_row(
+                    "SELECT amount FROM history WHERE script_hash = ?1 AND block_height = ?2 AND block_offset = ?3 AND is_output = 1 AND index_ = ?4",
+                    (script_hash.as_byte_array(), height, offset, prevout.vout),
+                    |row| row.get(0)
+                ).optional()?;
+                // Skip if not found (e.g. an input spending another script_hash)
+                if let Some(amount) = result {
+                    rows += insert.execute((
+                        script_hash.as_byte_array(),
+                        loc.height,
+                        loc.offset,
+                        0, // "false"
+                        i,
+                        amount,
+                    ))?;
+                }
+            }
+            // Add funding entries
+            for (i, output) in tx.output.iter().enumerate() {
+                // Skip if funding another script_hash
+                if script_hash == ScriptHash::new(&output.script_pubkey) {
+                    rows += insert.execute((
+                        script_hash.as_byte_array(),
+                        loc.height,
+                        loc.offset,
+                        1, // "true"
+                        i,
+                        output.value.to_sat(),
+                    ))?;
+                }
+            }
         }
         Ok(rows)
     }
