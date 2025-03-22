@@ -9,6 +9,7 @@ homepage = "https://github.com/romanz/bindex-rs"
 repository = "https://github.com/romanz/bindex-rs"
 keywords = ["bitcoin", "index", "database"]
 documentation = "https://docs.rs/bindex/"
+readme = "../README.md"
 
 
 [dependencies]
