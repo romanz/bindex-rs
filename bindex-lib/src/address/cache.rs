@@ -94,7 +94,7 @@ impl Cache {
                 block_offset INTEGER NOT NULL,
                 is_output BOOLEAN NOT NULL,     -- is it funding the address or not (= spending from it)
                 index_ INTEGER NOT NULL,        -- input/output index within a transaction
-                amount INTEGER NOT NULL,        -- in Satoshis
+                amount INTEGER NOT NULL,        -- in Satoshis (positive=funding, negative=spending)
                 PRIMARY KEY (script_hash, block_height, block_offset, is_output, index_)
                 FOREIGN KEY (block_height, block_offset) REFERENCES transactions (block_height, block_offset) ON DELETE CASCADE
             ) WITHOUT ROWID",
@@ -270,20 +270,21 @@ impl Cache {
                     None => continue,
                 };
                 // (script_hash, height, offset, `true`, index) -> amount
-                let result: Option<u64> = self.db.query_row(
+                let result: Option<i64> = self.db.query_row(
                     "SELECT amount FROM history WHERE script_hash = ?1 AND block_height = ?2 AND block_offset = ?3 AND is_output = TRUE AND index_ = ?4",
                     (script_hash.as_byte_array(), height, offset, prevout.vout),
                     |row| row.get(0)
                 ).optional()?;
                 // Skip if not found (e.g. an input spending another script_hash)
                 if let Some(amount) = result {
+                    assert!(amount > 0);
                     rows += insert.execute((
                         script_hash.as_byte_array(),
                         loc.height,
                         loc.offset,
                         false,
                         i,
-                        amount,
+                        -amount,
                     ))?;
                 }
             }

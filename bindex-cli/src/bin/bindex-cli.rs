@@ -63,7 +63,7 @@ fn get_history(db: &rusqlite::Connection) -> Result<Vec<Entry>> {
             SELECT
                 block_offset,
                 block_height,
-                sum((2*history.is_output - 1) * history.amount) AS delta
+                sum(history.amount) AS delta
             FROM history
             GROUP BY 1, 2
         )
@@ -108,7 +108,13 @@ fn get_history(db: &rusqlite::Connection) -> Result<Vec<Entry>> {
         .filter_map(Result::transpose)
         .collect::<Result<Vec<Entry>>>()?;
 
-    let unspent: usize = db.query_row("SELECT sum(2 * is_output - 1) FROM history", [], |row| {
+    assert!(!balance.is_negative());
+    let balance_check = db.query_row("SELECT sum(amount) FROM history", [], |row| {
+        Ok(bitcoin::SignedAmount::from_sat(row.get(0)?))
+    })?;
+    assert_eq!(balance_check, balance);
+
+    let utxos: usize = db.query_row("SELECT sum(sign(amount)) FROM history", [], |row| {
         row.get(0)
     })?;
 
@@ -117,7 +123,7 @@ fn get_history(db: &rusqlite::Connection) -> Result<Vec<Entry>> {
         scripts.len(),
         entries.len(),
         balance,
-        unspent,
+        utxos,
         t.elapsed(),
     );
     Ok(entries)
