@@ -271,7 +271,7 @@ impl Cache {
                 };
                 // (script_hash, height, offset, `true`, index) -> amount
                 let result: Option<u64> = self.db.query_row(
-                    "SELECT amount FROM history WHERE script_hash = ?1 AND block_height = ?2 AND block_offset = ?3 AND is_output = 1 AND index_ = ?4",
+                    "SELECT amount FROM history WHERE script_hash = ?1 AND block_height = ?2 AND block_offset = ?3 AND is_output = TRUE AND index_ = ?4",
                     (script_hash.as_byte_array(), height, offset, prevout.vout),
                     |row| row.get(0)
                 ).optional()?;
@@ -281,7 +281,7 @@ impl Cache {
                         script_hash.as_byte_array(),
                         loc.height,
                         loc.offset,
-                        0, // "false"
+                        false,
                         i,
                         amount,
                     ))?;
@@ -295,7 +295,7 @@ impl Cache {
                         script_hash.as_byte_array(),
                         loc.height,
                         loc.offset,
-                        1, // "true"
+                        true,
                         i,
                         output.value.to_sat(),
                     ))?;
