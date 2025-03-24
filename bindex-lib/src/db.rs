@@ -111,14 +111,14 @@ impl Store {
                     .map(index::ScriptHashPrefixRow::key),
             );
         }
-        // ScriptHashPrefixRow::key contains txpos, so it is safe to delete
+        // ScriptHashPrefixRow::key contains txnum, so it is safe to delete
         script_hash_rows.sort_unstable();
         for row in script_hash_rows {
             write_batch.delete_cf(cf, row);
         }
 
         let cf = self.cf(HEADERS_CF);
-        // index::Header key is next_txpos, so it is safe to delete
+        // index::Header key is next_txnum, so it is safe to delete
         for batch in batches {
             let (key, _value) = batch.header.serialize();
             write_batch.delete_cf(cf, key);
@@ -154,8 +154,8 @@ impl Store {
     pub fn scan(
         &self,
         script_hash: &index::ScriptHash,
-        from: index::TxPos,
-    ) -> Result<impl Iterator<Item = index::TxPos>, rocksdb::Error> {
+        from: index::TxNum,
+    ) -> Result<impl Iterator<Item = index::TxNum>, rocksdb::Error> {
         let cf = self.cf(SCRIPT_HASH_CF);
         let mut positions = Vec::new();
 
@@ -168,8 +168,8 @@ impl Store {
                 break;
             }
             let row = index::ScriptHashPrefixRow::from_bytes(key[..].try_into().unwrap());
-            assert!(row.txpos() >= from);
-            positions.push(row.txpos());
+            assert!(row.txnum() >= from);
+            positions.push(row.txnum());
         }
         Ok(positions.into_iter())
     }

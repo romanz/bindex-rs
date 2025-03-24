@@ -33,10 +33,10 @@ impl Chain {
         self.rows.len().checked_sub(1)
     }
 
-    pub fn next_txpos(&self) -> index::TxPos {
+    pub fn next_txnum(&self) -> index::TxNum {
         self.rows
             .last()
-            .map_or_else(index::TxPos::default, index::Header::next_txpos)
+            .map_or_else(index::TxNum::default, index::Header::next_txnum)
     }
 
     pub fn add(&mut self, row: index::Header) {
@@ -64,12 +64,12 @@ impl Chain {
         }
     }
 
-    pub fn find_by_txpos(&self, txpos: &index::TxPos) -> Option<Location> {
+    pub fn find_by_txnum(&self, txnum: &index::TxNum) -> Option<Location> {
         let height = match self
             .rows
-            .binary_search_by_key(txpos, index::Header::next_txpos)
+            .binary_search_by_key(txnum, index::Header::next_txnum)
         {
-            Ok(i) => i + 1, // hitting exactly a block boundary txpos -> next block
+            Ok(i) => i + 1, // hitting exactly a block boundary txnum -> next block
             Err(i) => i,
         };
 
@@ -77,13 +77,13 @@ impl Chain {
         let prev_pos = self
             .rows
             .get(height - 1)
-            .map_or_else(index::TxPos::default, index::Header::next_txpos);
+            .map_or_else(index::TxNum::default, index::Header::next_txnum);
 
         assert!(
-            txpos >= &prev_pos,
+            txnum >= &prev_pos,
             "binary search failed to find the correct position"
         );
-        let offset = txpos.offset_from(prev_pos).unwrap();
+        let offset = txnum.offset_from(prev_pos).unwrap();
         Some(Location {
             height,
             offset,

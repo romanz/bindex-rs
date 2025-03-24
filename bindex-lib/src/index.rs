@@ -45,12 +45,12 @@ impl ScriptHashPrefix {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Default)]
-pub struct TxPos(u64);
+pub struct TxNum(u64);
 
-impl TxPos {
+impl TxNum {
     const LEN: usize = std::mem::size_of::<Self>();
 
-    pub fn offset_from(&self, base: TxPos) -> Option<u64> {
+    pub fn offset_from(&self, base: TxNum) -> Option<u64> {
         self.0.checked_sub(base.0)
     }
 }
@@ -61,12 +61,12 @@ pub struct ScriptHashPrefixRow {
 }
 
 impl ScriptHashPrefixRow {
-    const LEN: usize = ScriptHashPrefix::LEN + TxPos::LEN;
+    const LEN: usize = ScriptHashPrefix::LEN + TxNum::LEN;
 
-    pub fn new(prefix: ScriptHashPrefix, txpos: TxPos) -> Self {
-        let mut result = [0u8; ScriptHashPrefix::LEN + TxPos::LEN];
+    pub fn new(prefix: ScriptHashPrefix, txnum: TxNum) -> Self {
+        let mut result = [0u8; ScriptHashPrefix::LEN + TxNum::LEN];
         result[..ScriptHashPrefix::LEN].copy_from_slice(&prefix.0);
-        result[ScriptHashPrefix::LEN..].copy_from_slice(&txpos.0.to_be_bytes());
+        result[ScriptHashPrefix::LEN..].copy_from_slice(&txnum.0.to_be_bytes());
         Self { key: result }
     }
 
@@ -78,8 +78,8 @@ impl ScriptHashPrefixRow {
         Self { key }
     }
 
-    pub fn txpos(&self) -> TxPos {
-        TxPos(u64::from_be_bytes(
+    pub fn txnum(&self) -> TxNum {
+        TxNum(u64::from_be_bytes(
             self.key[ScriptHashPrefix::LEN..].try_into().unwrap(),
         ))
     }
@@ -88,12 +88,12 @@ impl ScriptHashPrefixRow {
 #[derive(Debug, PartialEq, Eq)]
 struct IndexVisitor<'a> {
     rows: &'a mut Vec<ScriptHashPrefixRow>,
-    txpos: TxPos,
+    txnum: TxNum,
 }
 
 impl<'a> IndexVisitor<'a> {
-    fn new(txpos: TxPos, rows: &'a mut Vec<ScriptHashPrefixRow>) -> Self {
-        Self { txpos, rows }
+    fn new(txnum: TxNum, rows: &'a mut Vec<ScriptHashPrefixRow>) -> Self {
+        Self { txnum, rows }
     }
 
     fn add(&mut self, script: &bitcoin::Script) {
@@ -104,12 +104,12 @@ impl<'a> IndexVisitor<'a> {
         let script_hash = ScriptHash::new(script);
         self.rows.push(ScriptHashPrefixRow::new(
             ScriptHashPrefix::new(&script_hash),
-            self.txpos,
+            self.txnum,
         ));
     }
 
     fn finish_tx(&mut self) {
-        self.txpos.0 += 1;
+        self.txnum.0 += 1;
     }
 }
 
@@ -158,33 +158,33 @@ fn visit_spent<'a>(
 
 fn add_block_rows(
     block: &BlockBytes,
-    txpos: TxPos,
+    txnum: TxNum,
     rows: &mut Vec<ScriptHashPrefixRow>,
-) -> Result<TxPos, Error> {
-    let mut visitor = IndexVisitor::new(txpos, rows);
+) -> Result<TxNum, Error> {
+    let mut visitor = IndexVisitor::new(txnum, rows);
     let res = bsl::Block::visit(&block.0, &mut visitor).map_err(Error::Parse)?;
     if !res.remaining().is_empty() {
         return Err(Error::Leftover(res.remaining().len()));
     }
-    Ok(visitor.txpos)
+    Ok(visitor.txnum)
 }
 
 fn add_spent_rows(
     spent: &SpentBytes,
-    txpos: TxPos,
+    txnum: TxNum,
     rows: &mut Vec<ScriptHashPrefixRow>,
-) -> Result<TxPos, Error> {
-    let mut visitor = IndexVisitor::new(txpos, rows);
+) -> Result<TxNum, Error> {
+    let mut visitor = IndexVisitor::new(txnum, rows);
     let res = visit_spent(&spent.0, &mut visitor).map_err(Error::Parse)?;
     if !res.remaining().is_empty() {
         return Err(Error::Leftover(res.remaining().len()));
     }
-    Ok(visitor.txpos)
+    Ok(visitor.txnum)
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct Header {
-    next_txpos: TxPos,
+    next_txnum: TxNum,
     hash: bitcoin::BlockHash,
     header: bitcoin::block::Header,
 }
@@ -192,19 +192,19 @@ pub struct Header {
 const BLOCK_HASH_LEN: usize = bitcoin::BlockHash::LEN;
 const BLOCK_HEADER_LEN: usize = bitcoin::block::Header::SIZE;
 
-type SerializedHeaderRow = ([u8; TxPos::LEN], [u8; BLOCK_HASH_LEN + BLOCK_HEADER_LEN]);
+type SerializedHeaderRow = ([u8; TxNum::LEN], [u8; BLOCK_HASH_LEN + BLOCK_HEADER_LEN]);
 
 impl Header {
-    fn new(next_txpos: TxPos, hash: bitcoin::BlockHash, header: bitcoin::block::Header) -> Self {
+    fn new(next_txnum: TxNum, hash: bitcoin::BlockHash, header: bitcoin::block::Header) -> Self {
         Self {
-            next_txpos,
+            next_txnum,
             hash,
             header,
         }
     }
 
     pub fn serialize(&self) -> SerializedHeaderRow {
-        let key = self.next_txpos.0.to_be_bytes();
+        let key = self.next_txnum.0.to_be_bytes();
         let mut value = [0u8; BLOCK_HASH_LEN + BLOCK_HEADER_LEN];
         value[..BLOCK_HASH_LEN].copy_from_slice(self.hash.as_byte_array());
         self.header
@@ -215,14 +215,14 @@ impl Header {
 
     pub fn deserialize((key, value): SerializedHeaderRow) -> Self {
         Self {
-            next_txpos: TxPos(u64::from_be_bytes(key)),
+            next_txnum: TxNum(u64::from_be_bytes(key)),
             hash: BlockHash::from_byte_array(value[..BLOCK_HASH_LEN].try_into().unwrap()),
             header: bitcoin::consensus::encode::deserialize(&value[BLOCK_HASH_LEN..]).unwrap(),
         }
     }
 
-    pub fn next_txpos(&self) -> TxPos {
-        self.next_txpos
+    pub fn next_txnum(&self) -> TxNum {
+        self.next_txnum
     }
 
     pub fn hash(&self) -> BlockHash {
@@ -270,19 +270,19 @@ pub struct Batch {
 impl Batch {
     fn build(
         hash: BlockHash,
-        txpos: TxPos,
+        txnum: TxNum,
         block: &BlockBytes,
         spent: &SpentBytes,
     ) -> Result<Self, Error> {
         let mut script_hash_rows = vec![];
-        let txpos = {
-            let pos1 = add_block_rows(block, txpos, &mut script_hash_rows)?;
-            let pos2 = add_spent_rows(spent, txpos, &mut script_hash_rows)?;
-            assert_eq!(pos1, pos2); // both must have the same number of transactions
-            pos1
+        let txnum = {
+            let num1 = add_block_rows(block, txnum, &mut script_hash_rows)?;
+            let num2 = add_spent_rows(spent, txnum, &mut script_hash_rows)?;
+            assert_eq!(num1, num2); // both must have the same number of transactions
+            num1
         };
         let header = Header::new(
-            txpos,
+            txnum,
             hash,
             bitcoin::consensus::encode::deserialize(block.header())?,
         );
@@ -295,14 +295,14 @@ impl Batch {
 
 pub struct Builder {
     batches: Vec<Batch>,
-    next_txpos: TxPos,
+    next_txnum: TxNum,
     tip: bitcoin::BlockHash,
 }
 
 impl Builder {
     pub fn new(chain: &Chain) -> Self {
         Self {
-            next_txpos: chain.next_txpos(),
+            next_txnum: chain.next_txnum(),
             batches: vec![],
             tip: chain
                 .tip_hash()
@@ -316,9 +316,9 @@ impl Builder {
         block_bytes: &BlockBytes,
         spent_bytes: &SpentBytes,
     ) -> Result<(), Error> {
-        let batch = Batch::build(hash, self.next_txpos, block_bytes, spent_bytes)?;
+        let batch = Batch::build(hash, self.next_txnum, block_bytes, spent_bytes)?;
         assert_eq!(batch.header.header().prev_blockhash, self.tip);
-        self.next_txpos = batch.header.next_txpos();
+        self.next_txnum = batch.header.next_txnum();
         self.tip = batch.header.hash;
         self.batches.push(batch);
         Ok(())
@@ -344,54 +344,54 @@ mod tests {
     fn test_index_block() -> Result<(), Error> {
         let block_bytes = BlockBytes(hex!(BLOCK_HEX).to_vec());
         let spent_bytes = SpentBytes(hex!(SPENT_HEX).to_vec());
-        let txpos = TxPos(10);
+        let txnum = TxNum(10);
 
         let mut block_rows = vec![];
         assert_eq!(
-            add_block_rows(&block_bytes, txpos, &mut block_rows)?,
-            TxPos(14)
+            add_block_rows(&block_bytes, txnum, &mut block_rows)?,
+            TxNum(14)
         );
 
         assert_eq!(
             block_rows,
             vec![
-                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("e2151d493a1f9999")), TxPos(10)),
-                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("050b00fb9d5f7a63")), TxPos(11)),
-                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("b5a1091a739a6aba")), TxPos(11)),
-                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("03b0bfb44fd9d852")), TxPos(12)),
-                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("0faa9934b57389f2")), TxPos(12)),
-                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("4a569bc2092bcaf9")), TxPos(13))
+                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("e2151d493a1f9999")), TxNum(10)),
+                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("050b00fb9d5f7a63")), TxNum(11)),
+                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("b5a1091a739a6aba")), TxNum(11)),
+                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("03b0bfb44fd9d852")), TxNum(12)),
+                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("0faa9934b57389f2")), TxNum(12)),
+                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("4a569bc2092bcaf9")), TxNum(13))
             ]
         );
 
         let mut spent_rows = vec![];
         assert_eq!(
-            add_spent_rows(&spent_bytes, txpos, &mut spent_rows)?,
-            TxPos(14)
+            add_spent_rows(&spent_bytes, txnum, &mut spent_rows)?,
+            TxNum(14)
         );
 
         assert_eq!(
             spent_rows,
             vec![
-                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("4d5bea28470692cd")), TxPos(11)),
-                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("e9b09b065b5f43c2")), TxPos(12)),
-                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("2e7cdb30882b427d")), TxPos(13)),
+                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("4d5bea28470692cd")), TxNum(11)),
+                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("e9b09b065b5f43c2")), TxNum(12)),
+                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("2e7cdb30882b427d")), TxNum(13)),
             ]
         );
 
         // Verify spent outputs indexing
         let mut test_spent_rows = vec![];
         assert_eq!(
-            decode_spent(&spent_bytes.0, txpos, &mut test_spent_rows)?,
-            TxPos(14)
+            decode_spent(&spent_bytes.0, txnum, &mut test_spent_rows)?,
+            TxNum(14)
         );
         assert_eq!(test_spent_rows, spent_rows);
 
         // Verify public interface
         let block: bitcoin::Block = deserialize(&block_bytes.0).unwrap();
-        let batch = Batch::build(block.block_hash(), txpos, &block_bytes, &spent_bytes)?;
+        let batch = Batch::build(block.block_hash(), txnum, &block_bytes, &spent_bytes)?;
 
-        assert_eq!(batch.header.next_txpos(), TxPos(14));
+        assert_eq!(batch.header.next_txnum(), TxNum(14));
         assert_eq!(batch.header.hash(), block.block_hash());
         assert_eq!(batch.script_hash_rows, [block_rows, spent_rows].concat());
 
@@ -400,10 +400,10 @@ mod tests {
 
     fn decode_spent(
         buf: &[u8],
-        txpos: TxPos,
+        txnum: TxNum,
         rows: &mut Vec<ScriptHashPrefixRow>,
-    ) -> Result<TxPos, Error> {
-        let mut visitor = IndexVisitor::new(txpos, rows);
+    ) -> Result<TxNum, Error> {
+        let mut visitor = IndexVisitor::new(txnum, rows);
         let mut r = bitcoin::io::Cursor::new(buf);
         let txs_count = bitcoin::VarInt::consensus_decode_from_finite_reader(&mut r)?.0;
         for _ in 0..txs_count {
@@ -416,7 +416,7 @@ mod tests {
         }
         let pos: usize = r.position().try_into().unwrap();
         if pos == buf.len() {
-            Ok(visitor.txpos)
+            Ok(visitor.txnum)
         } else {
             Err(Error::Leftover(buf.len() - pos))
         }
@@ -424,31 +424,31 @@ mod tests {
 
     #[test]
     fn test_serde_row() {
-        let txpos = TxPos(0x123456789ABCDEF0);
-        let row = ScriptHashPrefixRow::new(ScriptHashPrefix([1, 2, 3, 4, 5, 6, 7, 8]), txpos);
-        assert_eq!(row.txpos(), txpos);
+        let txnum = TxNum(0x123456789ABCDEF0);
+        let row = ScriptHashPrefixRow::new(ScriptHashPrefix([1, 2, 3, 4, 5, 6, 7, 8]), txnum);
+        assert_eq!(row.txnum(), txnum);
         let data = row.key;
         assert_eq!(data, hex!("0102030405060708123456789abcdef0"));
         assert_eq!(ScriptHashPrefixRow::from_bytes(data), row);
     }
 
     #[test]
-    fn test_map_txpos() {
-        let txpos = [10, 20, 30, 40];
+    fn test_map_txnum() {
+        let txnum = [10, 20, 30, 40];
 
-        assert_eq!(txpos.binary_search(&0), Err(0));
-        assert_eq!(txpos.binary_search(&1), Err(0));
-        assert_eq!(txpos.binary_search(&9), Err(0));
-        assert_eq!(txpos.binary_search(&10), Ok(0));
-        assert_eq!(txpos.binary_search(&11), Err(1));
-        assert_eq!(txpos.binary_search(&19), Err(1));
-        assert_eq!(txpos.binary_search(&20), Ok(1));
-        assert_eq!(txpos.binary_search(&21), Err(2));
-        assert_eq!(txpos.binary_search(&29), Err(2));
-        assert_eq!(txpos.binary_search(&30), Ok(2));
-        assert_eq!(txpos.binary_search(&31), Err(3));
-        assert_eq!(txpos.binary_search(&39), Err(3));
-        assert_eq!(txpos.binary_search(&40), Ok(3));
-        assert_eq!(txpos.binary_search(&41), Err(4));
+        assert_eq!(txnum.binary_search(&0), Err(0));
+        assert_eq!(txnum.binary_search(&1), Err(0));
+        assert_eq!(txnum.binary_search(&9), Err(0));
+        assert_eq!(txnum.binary_search(&10), Ok(0));
+        assert_eq!(txnum.binary_search(&11), Err(1));
+        assert_eq!(txnum.binary_search(&19), Err(1));
+        assert_eq!(txnum.binary_search(&20), Ok(1));
+        assert_eq!(txnum.binary_search(&21), Err(2));
+        assert_eq!(txnum.binary_search(&29), Err(2));
+        assert_eq!(txnum.binary_search(&30), Ok(2));
+        assert_eq!(txnum.binary_search(&31), Err(3));
+        assert_eq!(txnum.binary_search(&39), Err(3));
+        assert_eq!(txnum.binary_search(&40), Ok(3));
+        assert_eq!(txnum.binary_search(&41), Err(4));
     }
 }

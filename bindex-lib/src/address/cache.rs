@@ -192,7 +192,7 @@ impl Cache {
         let chain = index.chain();
         let from = self
             .last_indexed_header(script_hash, chain)?
-            .map(index::Header::next_txpos)
+            .map(index::Header::next_txnum)
             .unwrap_or_default();
         index.find_locations(script_hash, from)?.for_each(|loc| {
             history.insert((*script_hash, loc));
