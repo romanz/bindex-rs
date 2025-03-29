@@ -110,12 +110,14 @@ fn get_history(db: &rusqlite::Connection) -> Result<Vec<Entry>> {
 
     assert!(!balance.is_negative());
     let balance_check = db.query_row("SELECT sum(amount) FROM history", [], |row| {
-        Ok(bitcoin::SignedAmount::from_sat(row.get(0)?))
+        let sum: Option<i64> = row.get(0)?;
+        Ok(bitcoin::SignedAmount::from_sat(sum.unwrap_or(0)))
     })?;
     assert_eq!(balance_check, balance);
 
     let utxos: usize = db.query_row("SELECT sum(sign(amount)) FROM history", [], |row| {
-        row.get(0)
+        let sum: Option<usize> = row.get(0)?;
+        Ok(sum.unwrap_or(0))
     })?;
 
     info!(
