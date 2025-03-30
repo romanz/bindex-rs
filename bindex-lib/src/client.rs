@@ -1,3 +1,5 @@
+use std::{io::ErrorKind, time::Duration};
+
 use bitcoin::{
     block::Header,
     consensus::{deserialize, Decodable},
@@ -33,11 +35,30 @@ impl Client {
     }
 
     fn get_bytes(&self, url: &str) -> Result<Vec<u8>, Error> {
-        let req = self.agent.get(url);
-        debug!("=> {:?}", req);
-        let res = req.call()?;
-        debug!("<= {:?}", res);
-        Ok(res.into_body().read_to_vec()?)
+        let mut iter = 0;
+        let err = loop {
+            iter += 1;
+            let req = self.agent.get(url);
+            debug!("=> {:?}", req);
+            let res = req.call();
+            debug!("<= {:?}", res);
+            let err = match res {
+                Ok(resp) => return Ok(resp.into_body().read_to_vec()?),
+                Err(err) => err,
+            };
+            if iter > 100 {
+                break err;
+            }
+            match &err {
+                ureq::Error::StatusCode(503) => (),
+                ureq::Error::Io(e) if e.kind() == ErrorKind::ConnectionRefused => (),
+                _ => break err, // non-retriable error
+            }
+            warn!("unavailable {}: {:?}", url, err);
+            std::thread::sleep(Duration::from_secs(1));
+            continue;
+        };
+        Err(Error::Http(err))
     }
 
     pub fn get_blockhash_by_height(&self, height: usize) -> Result<BlockHash, Error> {
