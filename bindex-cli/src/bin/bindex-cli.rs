@@ -197,6 +197,10 @@ struct Args {
     /// SQLite3 database for storing address history and relevant transactions
     #[arg(short = 'c', long = "cache")]
     cache_file: Option<PathBuf>,
+
+    /// Exit after one sync is over
+    #[arg(short = '1', long = "sync-once", default_value_t = false)]
+    sync_once: bool,
 }
 
 fn open_index(args: &Args) -> Result<address::Index> {
@@ -266,7 +270,11 @@ fn main() -> Result<()> {
             let entries = get_history(cache.db())?;
             print_history(entries, args.history_limit);
         }
+        if args.sync_once {
+            break;
+        }
         updated = false;
         thread::sleep(std::time::Duration::from_secs(1));
     }
+    Ok(())
 }
