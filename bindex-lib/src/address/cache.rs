@@ -104,8 +104,8 @@ impl Cache {
             r"
             CREATE TABLE IF NOT EXISTS watch (
                 script_hash BLOB NOT NULL,
-                script_bytes BLOB NOT NULL,
-                address TEXT NOT NULL,
+                script_bytes BLOB,
+                address TEXT,
                 PRIMARY KEY (script_hash)
             ) WITHOUT ROWID",
             (),
