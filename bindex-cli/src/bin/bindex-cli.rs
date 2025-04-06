@@ -9,7 +9,7 @@ use std::{
 
 use bindex::{
     address::{self, cache},
-    bitcoin::{self, consensus::deserialize, hashes::Hash, ScriptBuf, Txid},
+    bitcoin::{self, consensus::deserialize, hashes::Hash, Txid},
 };
 use chrono::{TimeZone, Utc};
 use clap::{Parser, ValueEnum};
@@ -41,19 +41,14 @@ impl Entry {
     }
 }
 
-fn get_scripts(db: &rusqlite::Connection) -> Result<HashSet<ScriptBuf>> {
-    let mut select = db.prepare("SELECT script_bytes FROM watch")?;
-    let scripts = select
-        .query([])?
-        .and_then(|row| Ok(ScriptBuf::from_bytes(row.get(0)?)));
-    scripts.collect()
-}
-
 fn get_history(db: &rusqlite::Connection) -> Result<Vec<Entry>> {
     let t = Instant::now();
 
-    let scripts = get_scripts(db)?;
-    if scripts.is_empty() {
+    let addresses: usize = db.query_row("SELECT count(*) FROM watch", [], |row| {
+        let sum: Option<usize> = row.get(0)?;
+        Ok(sum.unwrap_or(0))
+    })?;
+    if addresses == 0 {
         return Ok(vec![]);
     }
 
@@ -122,7 +117,7 @@ fn get_history(db: &rusqlite::Connection) -> Result<Vec<Entry>> {
 
     info!(
         "{} address history: {} entries, balance: {}, UTXOs: {} [{:?}]",
-        scripts.len(),
+        addresses,
         entries.len(),
         balance,
         utxos,
