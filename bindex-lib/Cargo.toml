@@ -15,6 +15,7 @@ readme = "../README.md"
 [dependencies]
 bitcoin = { version = "0.32", default-features = false }
 bitcoin_slices = { version = "0.10", features = ["bitcoin"] }
+clap = { version = "4", features = ["derive"] }
 hex = "0.4"
 log = "0.4"
 rocksdb = { version = "0.23", default-features = false, features = ["zstd"]}

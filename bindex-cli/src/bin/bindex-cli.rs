@@ -1,3 +1,11 @@
+use bindex::{
+    address::{self, cache},
+    bitcoin::{self, consensus::deserialize, hashes::Hash, Txid},
+    cli,
+};
+use chrono::{TimeZone, Utc};
+use clap::Parser;
+use log::*;
 use std::{
     collections::HashSet,
     io::Read,
@@ -6,14 +14,6 @@ use std::{
     thread,
     time::Instant,
 };
-
-use bindex::{
-    address::{self, cache},
-    bitcoin::{self, consensus::deserialize, hashes::Hash, Txid},
-};
-use chrono::{TimeZone, Utc};
-use clap::{Parser, ValueEnum};
-use log::*;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -153,33 +153,12 @@ fn print_history(mut entries: Vec<Entry>, history_limit: usize) {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
-enum Network {
-    Bitcoin,
-    Testnet,
-    Testnet4,
-    Regtest,
-    Signet,
-}
-
-impl From<Network> for bitcoin::Network {
-    fn from(value: Network) -> Self {
-        match value {
-            Network::Bitcoin => bitcoin::Network::Bitcoin,
-            Network::Testnet => bitcoin::Network::Testnet,
-            Network::Testnet4 => bitcoin::Network::Testnet4,
-            Network::Regtest => bitcoin::Network::Regtest,
-            Network::Signet => bitcoin::Network::Signet,
-        }
-    }
-}
-
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 /// Bitcoin address indexer
 struct Args {
-    #[arg(value_enum, short = 'n', long = "network", default_value_t = Network::Bitcoin)]
-    network: Network,
+    #[arg(value_enum, short = 'n', long = "network", default_value_t = cli::Network::Bitcoin)]
+    network: cli::Network,
 
     /// Limit on how many recent transactions to print
     #[arg(short = 'l', long = "limit", default_value_t = 100)]
@@ -230,7 +209,7 @@ fn main() -> Result<()> {
     let cache = cache::Cache::open(cache_db)?;
     cache.add(collect_addresses(&args)?)?;
 
-    let mut index = address::Index::open_default(args.network.into())?;
+    let mut index = address::Index::open_default(args.network)?;
     let mut updated = true; // to sync the cache on first iteration
     loop {
         while index.sync_chain(1000)?.indexed_blocks > 0 {

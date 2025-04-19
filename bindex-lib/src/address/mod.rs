@@ -2,12 +2,12 @@ pub mod cache;
 
 use std::{path::Path, time::Duration};
 
-use bitcoin::{hashes::Hash, Network};
+use bitcoin::hashes::Hash;
 use log::*;
 
 use crate::{
     chain::{self, Chain, Location},
-    client, db, index,
+    cli, client, db, index,
 };
 
 #[derive(thiserror::Error, Debug)]
@@ -23,9 +23,6 @@ pub enum Error {
 
     #[error("Genesis block hash mismatch: {0} != {1}")]
     ChainMismatch(bitcoin::BlockHash, bitcoin::BlockHash),
-
-    #[error("Unsupported network: {0}")]
-    UnsupportedNetwork(bitcoin::Network),
 }
 
 pub struct Index {
@@ -86,15 +83,15 @@ impl Index {
         })
     }
 
-    pub fn open_default(network: Network) -> Result<Self, Error> {
-        let default_db_path = format!("db/{network}");
+    pub fn open_default(network: cli::Network) -> Result<Self, Error> {
+        let bitcoin_network: bitcoin::Network = network.into();
+        let default_db_path = format!("db/{bitcoin_network}");
         let default_rpc_port = match network {
-            Network::Bitcoin => 8332,
-            Network::Testnet => 18332,
-            Network::Testnet4 => 48332,
-            Network::Regtest => 18443,
-            Network::Signet => 38332,
-            _ => return Err(Error::UnsupportedNetwork(network)),
+            cli::Network::Bitcoin => 8332,
+            cli::Network::Testnet => 18332,
+            cli::Network::Testnet4 => 48332,
+            cli::Network::Signet => 38332,
+            cli::Network::Regtest => 18443,
         };
         let default_rest_url = format!("http://localhost:{}", default_rpc_port);
         Self::open(default_db_path, default_rest_url)
