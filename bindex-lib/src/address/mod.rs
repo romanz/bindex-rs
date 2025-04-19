@@ -1,7 +1,8 @@
 pub mod cache;
 
-use std::path::Path;
+use std::{path::Path, time::Duration};
 
+use bitcoin::{hashes::Hash, Network};
 use log::*;
 
 use crate::{
@@ -34,11 +35,22 @@ pub struct Index {
     store: db::Store,
 }
 
-#[derive(Default)]
 pub struct Stats {
+    pub tip: bitcoin::BlockHash,
     pub indexed_blocks: usize,
     pub size_read: usize,
     pub elapsed: std::time::Duration,
+}
+
+impl Stats {
+    fn new(tip: bitcoin::BlockHash) -> Self {
+        Self {
+            tip,
+            indexed_blocks: 0,
+            size_read: 0,
+            elapsed: Duration::ZERO,
+        }
+    }
 }
 
 impl Index {
@@ -99,7 +111,11 @@ impl Index {
     }
 
     pub fn sync_chain(&mut self, limit: usize) -> Result<Stats, Error> {
-        let mut stats = Stats::default();
+        let mut stats = Stats::new(
+            self.chain
+                .tip_hash()
+                .unwrap_or_else(bitcoin::BlockHash::all_zeros),
+        );
         let t = std::time::Instant::now();
 
         let headers = loop {
@@ -129,6 +145,7 @@ impl Index {
             let spent_bytes = self.client.get_spent_bytes(blockhash)?;
             builder.index(blockhash, &block_bytes, &spent_bytes)?;
 
+            stats.tip = blockhash;
             stats.size_read += block_bytes.len();
             stats.size_read += spent_bytes.len();
             stats.indexed_blocks += 1;
