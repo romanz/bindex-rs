@@ -198,30 +198,6 @@ struct Args {
     sync_once: bool,
 }
 
-fn open_index(args: &Args) -> Result<address::Index> {
-    let default_rpc_port = match args.network {
-        Network::Bitcoin => 8332,
-        Network::Testnet => 18332,
-        Network::Testnet4 => 48332,
-        Network::Regtest => 18443,
-        Network::Signet => 38332,
-    };
-
-    let default_index_dir = match args.network {
-        Network::Bitcoin => "bitcoin",
-        Network::Testnet => "testnet",
-        Network::Testnet4 => "testnet4",
-        Network::Regtest => "regtest",
-        Network::Signet => "signet",
-    };
-
-    let url = format!("http://localhost:{}", default_rpc_port);
-    let db_path = format!("db/{default_index_dir}");
-    info!("index DB: {}, node URL: {}", db_path, url);
-
-    Ok(address::Index::open(db_path, url)?)
-}
-
 fn collect_addresses(args: &Args) -> Result<HashSet<bitcoin::Address>> {
     let text = args.address_file.as_ref().map_or_else(
         || Ok(String::new()),
@@ -254,7 +230,7 @@ fn main() -> Result<()> {
     let cache = cache::Cache::open(cache_db)?;
     cache.add(collect_addresses(&args)?)?;
 
-    let mut index = open_index(&args)?;
+    let mut index = address::Index::open_default(args.network.into())?;
     let mut updated = true; // to sync the cache on first iteration
     loop {
         while index.sync_chain(1000)?.indexed_blocks > 0 {

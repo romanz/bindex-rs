@@ -22,6 +22,9 @@ pub enum Error {
 
     #[error("Genesis block hash mismatch: {0} != {1}")]
     ChainMismatch(bitcoin::BlockHash, bitcoin::BlockHash),
+
+    #[error("Unsupported network: {0}")]
+    UnsupportedNetwork(bitcoin::Network),
 }
 
 pub struct Index {
@@ -40,6 +43,9 @@ pub struct Stats {
 
 impl Index {
     pub fn open(db_path: impl AsRef<Path>, url: impl Into<String>) -> Result<Self, Error> {
+        let db_path = db_path.as_ref();
+        let url = url.into();
+        info!("index DB: {:?}, node URL: {}", db_path, url);
         let agent = ureq::Agent::new_with_config(
             ureq::config::Config::builder()
                 .max_response_header_size(usize::MAX) // Disabled as a workaround
@@ -66,6 +72,20 @@ impl Index {
             client,
             store,
         })
+    }
+
+    pub fn open_default(network: Network) -> Result<Self, Error> {
+        let default_db_path = format!("db/{network}");
+        let default_rpc_port = match network {
+            Network::Bitcoin => 8332,
+            Network::Testnet => 18332,
+            Network::Testnet4 => 48332,
+            Network::Regtest => 18443,
+            Network::Signet => 38332,
+            _ => return Err(Error::UnsupportedNetwork(network)),
+        };
+        let default_rest_url = format!("http://localhost:{}", default_rpc_port);
+        Self::open(default_db_path, default_rest_url)
     }
 
     fn drop_tip(&mut self) -> Result<bitcoin::BlockHash, Error> {
