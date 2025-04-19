@@ -204,7 +204,9 @@ impl Cache {
         &self,
         entries: impl Iterator<Item = (usize, &'a index::Header)>,
     ) -> Result<usize, Error> {
-        let mut insert = self.db.prepare("INSERT INTO headers VALUES (?1, ?2, ?3)")?;
+        let mut insert = self
+            .db
+            .prepare("INSERT OR IGNORE INTO headers VALUES (?1, ?2, ?3)")?;
         let mut rows = 0;
         for (height, header) in entries {
             rows += insert.execute((
@@ -221,17 +223,15 @@ impl Cache {
         locations: impl Iterator<Item = &'a Location<'a>>,
         index: &address::Index,
     ) -> Result<usize, Error> {
-        let mut insert = self.db.prepare(
-            r"
-            INSERT INTO transactions(block_height, block_offset, tx_bytes, tx_id)
-            VALUES (?1, ?2, ?3, ?4)",
-        )?;
+        let mut insert = self
+            .db
+            .prepare("INSERT OR IGNORE INTO transactions VALUES (?1, ?2, ?3, ?4)")?;
         let mut rows = 0;
         for loc in locations {
             let tx_bytes = index.get_tx_bytes(loc).expect("missing tx bytes");
             let parsed = bsl::Transaction::parse(&tx_bytes).expect("invalid tx");
             let txid = Txid::from(parsed.parsed().txid()).to_byte_array();
-            rows += insert.execute((loc.height, loc.offset, tx_bytes, txid))?;
+            rows += insert.execute((loc.height, loc.offset, txid, tx_bytes))?;
         }
         Ok(rows)
     }
