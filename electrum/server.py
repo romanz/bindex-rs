@@ -549,7 +549,7 @@ class ElectrumX(SessionBase):
         self.request_handlers = handlers
 
 
-async def sync_task(sync, db):
+async def sync_task(sync_queue, db):
     try:
         indexer = await asyncio.create_subprocess_exec(
             BINARY,
@@ -568,10 +568,10 @@ async def sync_task(sync, db):
             timeout = 1.0
             try:
                 while True:
-                    item = await asyncio.wait_for(sync.get(), timeout)
+                    item = await asyncio.wait_for(sync_queue.get(), timeout)
                     items.append(item)
-                    for _ in range(sync.qsize()):
-                        items.append(sync.get_nowait())
+                    for _ in range(sync_queue.qsize()):
+                        items.append(sync_queue.get_nowait())
                     timeout = 0.1
             except asyncio.exceptions.TimeoutError:
                 pass
