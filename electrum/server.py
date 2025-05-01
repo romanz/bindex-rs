@@ -278,7 +278,7 @@ def version_string(ptuple):
     return ".".join(str(p) for p in ptuple)
 
 
-class ElectrumX(SessionBase):
+class ElectrumSession(SessionBase):
     """A TCP server that handles incoming Electrum connections."""
 
     PROTOCOL_MIN = (1, 4)
@@ -615,7 +615,7 @@ async def main():
     logging.basicConfig(level="INFO", format=FMT)
     # wait for initial index sync
     mgr = Manager()
-    cls = functools.partial(ElectrumX, mgr=mgr)
+    cls = functools.partial(ElectrumSession, mgr=mgr)
     await serve_rs(cls, host="localhost", port=50001)
     async with TaskGroup() as g:
         await g.spawn(sync_task(mgr.sync, mgr.db))
