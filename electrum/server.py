@@ -551,6 +551,7 @@ class ElectrumX(SessionBase):
 
 async def sync_task(sync_queue, db):
     try:
+        # run bindex in the background
         indexer = await asyncio.create_subprocess_exec(
             BINARY,
             "-c",
@@ -563,6 +564,7 @@ async def sync_task(sync_queue, db):
         tip = line.decode().strip()
         LOG.info("pid=%s indexer at block=%s", indexer.pid, tip)
 
+        # sending new scripthashes on subscription requests
         while True:
             items = []
             timeout = 1.0
@@ -570,12 +572,14 @@ async def sync_task(sync_queue, db):
                 while True:
                     item = await asyncio.wait_for(sync_queue.get(), timeout)
                     items.append(item)
-                    for _ in range(sync_queue.qsize()):
+                    while not sync_queue.empty():
                         items.append(sync_queue.get_nowait())
-                    timeout = 0.1
+                    # use a shorter timeout for coalescing subsequent subscriptions
+                    timeout = 0.01
             except asyncio.exceptions.TimeoutError:
                 pass
 
+            # update bindex DB with the new scripthashes
             c = db.cursor()
             c.execute("BEGIN")
             try:
@@ -590,11 +594,16 @@ async def sync_task(sync_queue, db):
                 c.execute("ROLLBACK")
                 raise
 
+            # update history index for the new scripthashes
             indexer.stdin.write(b"\n")
             await indexer.stdin.drain()
-            line = await indexer.stdout.readline()  # wait for an index sync
+
+            # wait for the index sync to finish
+            line = await indexer.stdout.readline()
             if items:
                 LOG.info("indexer at block=%s: %d reqs", tip, len(items))
+
+            # mark subscription requests as done
             for _, ack_fn in items:
                 ack_fn()
     except Exception:
