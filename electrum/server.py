@@ -594,7 +594,7 @@ async def sync_task(sync_queue, db):
             await indexer.stdin.drain()
             line = await indexer.stdout.readline()  # wait for an index sync
             if items:
-                LOG.info("indexer at block=%s: %d ACKs", tip, len(items))
+                LOG.info("indexer at block=%s: %d reqs", tip, len(items))
             for _, ack_fn in items:
                 ack_fn()
     except Exception:
