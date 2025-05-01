@@ -227,7 +227,7 @@ class SessionBase(RPCSession):
     sessions.
     """
 
-    log_me = True
+    log_me = False
 
     session_counter = itertools.count()
 
