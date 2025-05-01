@@ -292,7 +292,6 @@ class ElectrumSession(SessionBase):
         self.connection.max_response_size = self.env.max_send
         self.hashX_subs = {}
         self.sv_seen = False
-        self.mempool_statuses = {}
         self.set_request_handlers()
         self.is_peer = False
         self.protocol_tuple = self.PROTOCOL_MIN
@@ -326,61 +325,35 @@ class ElectrumSession(SessionBase):
 
     @classmethod
     def server_version_args(cls):
-        """The arguments to a server.version RPC call to a peer."""
         return [VERSION, cls.protocol_min_max_strings()]
 
     def protocol_version_string(self):
         return version_string(self.protocol_tuple)
 
     def unsubscribe_hashX(self, hashX):
-        self.mempool_statuses.pop(hashX, None)
         return self.hashX_subs.pop(hashX, None)
 
     async def subscribe_headers_result(self):
-        """The result of a header subscription or notification."""
         return await self.session_mgr.latest_header()
 
     async def headers_subscribe(self):
-        """Subscribe to get raw headers of new blocks."""
         self.subscribe_headers = True
         return await self.subscribe_headers_result()
 
     async def add_peer(self, features):
-        """Add a peer (but only if the peer resolves to the source)."""
+        pass
 
     async def peers_subscribe(self):
-        """Return the server peers as a list of (ip, host, details) tuples."""
         return []
 
     async def address_status(self, hashX):
-        """Returns an address status.
-
-        Status is a hex string, but must be None if there is no history.
-        """
-        # Note history is ordered and mempool unordered in electrum-server
-        # For mempool, height is -1 if it has unconfirmed inputs, otherwise 0
         db_history = await self.session_mgr.limited_history(hashX)
-        mempool = []  ### await self.mempool.transaction_summaries(hashX)
 
         status = "".join(
             f"{hash_to_hex_str(tx_hash)}:{height:d}:" for tx_hash, height in db_history
         )
-        status += "".join(
-            f"{hash_to_hex_str(tx.hash)}:{-tx.has_unconfirmed_inputs:d}:"
-            for tx in mempool
-        )
 
-        if status:
-            status = sha256(status.encode()).hex()
-        else:
-            status = None
-
-        if mempool:
-            self.mempool_statuses[hashX] = status
-        else:
-            self.mempool_statuses.pop(hashX, None)
-
-        return status
+        return sha256(status.encode()).hex() if status else None
 
     async def hashX_subscribe(self, hashX, alias):
         await self.session_mgr.subscribe(hashX)
@@ -391,12 +364,9 @@ class ElectrumSession(SessionBase):
         return result
 
     async def unconfirmed_history(self, hashX):
-        # Note unconfirmed history is unordered in electrum-server
-        # height is -1 if it has unconfirmed inputs, otherwise 0
         return []
 
     async def confirmed_and_unconfirmed_history(self, hashX):
-        # Note history is ordered but unconfirmed is unordered in e-s
         history = await self.session_mgr.limited_history(hashX)
         conf = [
             {"tx_hash": hash_to_hex_str(tx_hash), "height": height}
@@ -405,51 +375,23 @@ class ElectrumSession(SessionBase):
         return conf + await self.unconfirmed_history(hashX)
 
     async def scripthash_get_history(self, scripthash):
-        """Return the confirmed and unconfirmed history of a scripthash."""
         hashX = scripthash_to_hashX(scripthash)
         return await self.confirmed_and_unconfirmed_history(hashX)
 
     async def scripthash_subscribe(self, scripthash):
-        """Subscribe to a script hash.
-
-        scripthash: the SHA256 hash of the script to subscribe to"""
         hashX = scripthash_to_hashX(scripthash)
         return await self.hashX_subscribe(hashX, scripthash)
 
     async def scripthash_unsubscribe(self, scripthash):
-        """Unsubscribe from a script hash."""
         hashX = scripthash_to_hashX(scripthash)
         return self.unsubscribe_hashX(hashX) is not None
 
-    async def _merkle_proof(self, cp_height, height):
-        max_height = self.db.db_height
-        if not height <= cp_height <= max_height:
-            raise RPCError(
-                BAD_REQUEST,
-                f"require header height {height:,d} <= "
-                f"cp_height {cp_height:,d} <= "
-                f"chain height {max_height:,d}",
-            )
-        branch, root = await self.db.header_branch_and_root(cp_height + 1, height)
-        return {
-            "branch": [hash_to_hex_str(elt) for elt in branch],
-            "root": hash_to_hex_str(root),
-        }
-
     async def block_header(self, height):
-        """Return a raw block header as a hexadecimal string, or as a
-        dictionary with a merkle proof."""
         height = non_negative_integer(height)
         raw_header_hex = (await self.session_mgr.raw_header(height)).hex()
         return raw_header_hex
 
     async def block_headers(self, start_height, count):
-        """Return count concatenated block headers as hex for the main chain;
-        starting at start_height.
-
-        start_height and count must be non-negative integers.  At most
-        MAX_CHUNK_SIZE headers will be returned.
-        """
         start_height = non_negative_integer(start_height)
         count = non_negative_integer(count)
 
@@ -460,45 +402,24 @@ class ElectrumSession(SessionBase):
         return result
 
     async def donation_address(self):
-        """Return the donation address as a string, empty if there is none."""
         return self.env.donation_address
 
     async def banner(self):
-        """Return the server banner text."""
         return ""
 
     async def relayfee(self):
         return 0
 
     async def estimatefee(self, number, mode=None):
-        """The estimated transaction fee per kilobyte to be paid for a
-        transaction to be included within a certain number of blocks.
-
-        number: the number of blocks
-        mode: CONSERVATIVE or ECONOMICAL estimation mode
-        """
         return 0
 
     async def ping(self):
-        """Serves as a connection keep-alive mechanism and for the client to
-        confirm the server is still responding.
-        """
         return None
 
     async def server_version(self, client_name="", protocol_version=None):
-        """Returns the server version as a string.
-
-        client_name: a string identifying the client
-        protocol_version: the protocol version spoken by the client
-        """
         return VERSION, self.protocol_version_string()
 
     async def transaction_get(self, tx_hash, verbose=False):
-        """Return the serialized raw transaction given its hash
-
-        tx_hash: the transaction hash as a hexadecimal string
-        verbose: passed on to the daemon
-        """
         tx_hash = assert_tx_hash(tx_hash)
         if verbose not in (True, False):
             raise RPCError(BAD_REQUEST, '"verbose" must be a boolean')
@@ -507,12 +428,6 @@ class ElectrumSession(SessionBase):
         return raw.hex()
 
     async def transaction_merkle(self, tx_hash, height):
-        """Return the merkle branch to a confirmed transaction given its hash
-        and height.
-
-        tx_hash: the transaction hash as a hexadecimal string
-        height: the height of the block it is in
-        """
         tx_hash = assert_tx_hash(tx_hash)
         height = non_negative_integer(height)
 
