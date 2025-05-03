@@ -516,7 +516,11 @@ async def sync_task(sync_queue, db):
 
             # wait for the index sync to finish
             line = await indexer.stdout.readline()
-            if items:
+            new_tip = line.decode().strip()
+            chain_updated = new_tip != tip
+            tip = new_tip
+
+            if items or chain_updated:
                 LOG.info("indexer at block=%s: %d reqs", tip, len(items))
 
             # mark subscription requests as done
