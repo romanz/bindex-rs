@@ -510,6 +510,19 @@ async def get_items(q: asyncio.Queue):
     return items
 
 
+def update_scripthashes(c: sqlite3.Cursor, data: list[bytes]):
+    # update bindex DB with the new scripthashes
+    c.execute("BEGIN")
+    try:
+        r = c.executemany("INSERT OR IGNORE INTO watch (script_hash) VALUES (?1)", data)
+        if r.rowcount:
+            LOG.info("watching %d new addresses", r.rowcount)
+        c.execute("COMMIT")
+    except Exception:
+        c.execute("ROLLBACK")
+        raise
+
+
 async def sync_task(mgr: Manager):
     try:
         # run bindex in the background
@@ -528,20 +541,8 @@ async def sync_task(mgr: Manager):
         # sending new scripthashes on subscription requests
         while True:
             items = await get_items(mgr.sync)
-            # update bindex DB with the new scripthashes
-            c = mgr.db.cursor()
-            c.execute("BEGIN")
-            try:
-                data = [[h] for h, _ in items]
-                r = c.executemany(
-                    "INSERT OR IGNORE INTO watch (script_hash) VALUES (?1)", data
-                )
-                if r.rowcount:
-                    LOG.info("watching %d new addresses", r.rowcount)
-                c.execute("COMMIT")
-            except Exception:
-                c.execute("ROLLBACK")
-                raise
+            data = [[i] for i, _ in items]
+            update_scripthashes(mgr.db.cursor(), data)
 
             # update history index for the new scripthashes
             indexer.stdin.write(b"\n")
