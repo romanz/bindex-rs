@@ -46,7 +46,7 @@ class Env:
     donation_address = None
 
 
-VERSION = "bindex/0"
+VERSION = "electrs/0.999999"  # HACK: let Sparrow use batching
 
 HERE = Path(__file__).resolve()
 BINARY = HERE.parent.parent / "target" / "release" / "indexer"
