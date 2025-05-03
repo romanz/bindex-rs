@@ -76,7 +76,7 @@ class Manager:
     async def chaininfo(self):
         return await self.get("chaininfo.json", lambda r: r.json())
 
-    async def limited_history(self, hashx: bytes):
+    async def get_history(self, hashx: bytes):
         query = """
 SELECT DISTINCT
     t.tx_id,
@@ -347,7 +347,7 @@ class ElectrumSession(SessionBase):
         return []
 
     async def address_status(self, hashX):
-        db_history = await self.session_mgr.limited_history(hashX)
+        db_history = await self.session_mgr.get_history(hashX)
 
         status = "".join(
             f"{hash_to_hex_str(tx_hash)}:{height:d}:" for tx_hash, height in db_history
@@ -363,20 +363,17 @@ class ElectrumSession(SessionBase):
         self.hashX_subs[hashX] = alias
         return result
 
-    async def unconfirmed_history(self, hashX):
-        return []
-
-    async def confirmed_and_unconfirmed_history(self, hashX):
-        history = await self.session_mgr.limited_history(hashX)
+    async def confirmed_history(self, hashX):
+        history = await self.session_mgr.get_history(hashX)
         conf = [
             {"tx_hash": hash_to_hex_str(tx_hash), "height": height}
             for tx_hash, height in history
         ]
-        return conf + await self.unconfirmed_history(hashX)
+        return conf
 
     async def scripthash_get_history(self, scripthash):
         hashX = scripthash_to_hashX(scripthash)
-        return await self.confirmed_and_unconfirmed_history(hashX)
+        return await self.confirmed_history(hashX)
 
     async def scripthash_subscribe(self, scripthash):
         hashX = scripthash_to_hashX(scripthash)
