@@ -71,6 +71,9 @@ impl Store {
     }
 
     pub fn write(&self, batches: &[index::Batch]) -> Result<(), rocksdb::Error> {
+        if batches.is_empty() {
+            return Ok(());
+        }
         let mut write_batch = rocksdb::WriteBatch::default();
         let cf = self.cf(SCRIPT_HASH_CF);
         let mut script_hash_rows = vec![];
