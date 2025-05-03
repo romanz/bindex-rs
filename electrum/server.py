@@ -59,7 +59,16 @@ class Manager:
     def __init__(self):
         self.db = sqlite3.connect(CACHE_DB)
         self.merkle = merkle.Merkle()
-        self.sync = asyncio.Queue(50)
+        self.sync: asyncio.Queue = asyncio.Queue(50)
+        self.sessions: set[ElectrumSession] = set()
+
+    async def notify_sessions(self, chain_updated: bool):
+        if chain_updated:
+            for session in self.sessions:
+                try:
+                    await session.notify()
+                except Exception:
+                    LOG.exception("failed to notify session #%d", session.session_id)
 
     async def latest_header(self) -> dict:
         j = await self.chaininfo()
@@ -284,17 +293,23 @@ class ElectrumSession(SessionBase):
     PROTOCOL_MIN = (1, 4)
     PROTOCOL_MAX = (1, 4, 3)
 
-    def __init__(self, *args, mgr, **kwargs):
+    def __init__(self, *args, mgr: Manager, **kwargs):
         super().__init__(*args, **kwargs)
         self.env = Env()
         self.session_mgr = mgr
-        self.subscribe_headers = False
+        self.subscribe_headers: dict | None = None
         self.connection.max_response_size = self.env.max_send
         self.hashX_subs = {}
         self.sv_seen = False
         self.set_request_handlers()
         self.is_peer = False
         self.protocol_tuple = self.PROTOCOL_MIN
+        self.session_mgr.sessions.add(self)
+
+    async def connection_lost(self):
+        """Handle client disconnection."""
+        await super().connection_lost()
+        self.session_mgr.sessions.remove(self)
 
     @classmethod
     def protocol_min_max_strings(cls):
@@ -333,12 +348,12 @@ class ElectrumSession(SessionBase):
     def unsubscribe_hashX(self, hashX):
         return self.hashX_subs.pop(hashX, None)
 
-    async def subscribe_headers_result(self):
+    async def subscribe_headers_result(self) -> dict:
         return await self.session_mgr.latest_header()
 
     async def headers_subscribe(self):
-        self.subscribe_headers = True
-        return await self.subscribe_headers_result()
+        self.subscribe_headers = await self.subscribe_headers_result()
+        return self.subscribe_headers
 
     async def add_peer(self, features):
         pass
@@ -360,8 +375,26 @@ class ElectrumSession(SessionBase):
 
         # Store the subscription only after address_status succeeds
         result = await self.address_status(hashX)
-        self.hashX_subs[hashX] = alias
+        self.hashX_subs[hashX] = result
         return result
+
+    async def notify(self):
+        if self.subscribe_headers is not None:
+            new_result = await self.subscribe_headers_result()
+            if self.subscribe_headers != new_result:
+                self.subscribe_headers = new_result
+                await self.send_notification(
+                    "blockchain.headers.subscribe", (new_result,)
+                )
+
+        for hashX in list(self.hashX_subs):
+            new_status = await self.address_status(hashX)
+            status = self.hashX_subs[hashX]
+            if status != new_status:
+                self.hashX_subs[hashX] = new_status
+                await self.send_notification(
+                    "blockchain.scripthash.subscribe", (new_status,)
+                )
 
     async def confirmed_history(self, hashX):
         history = await self.session_mgr.get_history(hashX)
@@ -461,7 +494,7 @@ class ElectrumSession(SessionBase):
         self.request_handlers = handlers
 
 
-async def get_items(q):
+async def get_items(q: asyncio.Queue):
     items = []
     timeout = 1.0
     try:
@@ -477,7 +510,7 @@ async def get_items(q):
     return items
 
 
-async def sync_task(sync_queue, db):
+async def sync_task(mgr: Manager):
     try:
         # run bindex in the background
         indexer = await asyncio.create_subprocess_exec(
@@ -494,9 +527,9 @@ async def sync_task(sync_queue, db):
 
         # sending new scripthashes on subscription requests
         while True:
-            items = await get_items(sync_queue)
+            items = await get_items(mgr.sync)
             # update bindex DB with the new scripthashes
-            c = db.cursor()
+            c = mgr.db.cursor()
             c.execute("BEGIN")
             try:
                 data = [[h] for h, _ in items]
@@ -526,6 +559,9 @@ async def sync_task(sync_queue, db):
             # mark subscription requests as done
             for _, ack_fn in items:
                 ack_fn()
+
+            # make sure all sessions are notified
+            await mgr.notify_sessions(chain_updated)
     except Exception:
         LOG.exception("sync_task() failed")
 
@@ -538,7 +574,7 @@ async def main():
     cls = functools.partial(ElectrumSession, mgr=mgr)
     await serve_rs(cls, host="localhost", port=50001)
     async with TaskGroup() as g:
-        await g.spawn(sync_task(mgr.sync, mgr.db))
+        await g.spawn(sync_task(mgr))
         await g.join()
 
 
