@@ -27,16 +27,21 @@ fn main() -> Result<()> {
     let cache = cache::Cache::open(cache_db)?;
     let mut index = address::Index::open_default(args.network)?;
     let mut line = String::new();
+
+    let mut tip = None;
     loop {
-        let tip = loop {
+        let new_tip = loop {
             let stats = index.sync_chain(1000)?;
             if stats.indexed_blocks == 0 {
                 break stats.tip;
             }
         };
-        println!("{}", tip); // notify Electrum server
+        if tip != Some(new_tip) {
+            cache.sync(&index)?;
+            tip = Some(new_tip);
+        }
+        println!("{}", new_tip); // notify Electrum server
         line.clear();
         std::io::stdin().read_line(&mut line)?; // wait for notification
-        cache.sync(&index)?;
     }
 }
