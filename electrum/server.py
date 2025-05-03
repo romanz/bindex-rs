@@ -16,6 +16,7 @@ import sqlite3
 import subprocess
 import sys
 from pathlib import Path
+from asyncio.subprocess import Process
 
 from aiorpcx import TaskGroup
 from aiorpcx import (
@@ -62,13 +63,12 @@ class Manager:
         self.sync: asyncio.Queue = asyncio.Queue(50)
         self.sessions: set[ElectrumSession] = set()
 
-    async def notify_sessions(self, chain_updated: bool):
-        if chain_updated:
-            for session in self.sessions:
-                try:
-                    await session.notify()
-                except Exception:
-                    LOG.exception("failed to notify session #%d", session.session_id)
+    async def notify_sessions(self):
+        for session in self.sessions:
+            try:
+                await session.notify()
+            except Exception:
+                LOG.exception("failed to notify session #%d", session.session_id)
 
     async def latest_header(self) -> dict:
         j = await self.chaininfo()
@@ -523,10 +523,15 @@ def update_scripthashes(c: sqlite3.Cursor, data: list[bytes]):
         raise
 
 
-async def sync_task(mgr: Manager):
-    try:
+class Indexer:
+    def __init__(self, p: Process, tip: str):
+        self.p = p
+        self.tip = tip
+
+    @classmethod
+    async def start(cls) -> "Indexer":
         # run bindex in the background
-        indexer = await asyncio.create_subprocess_exec(
+        p = await asyncio.create_subprocess_exec(
             BINARY,
             "-c",
             CACHE_DB,
@@ -534,35 +539,43 @@ async def sync_task(mgr: Manager):
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
         )
-        line = await indexer.stdout.readline()  # wait for an index sync
+        line = await p.stdout.readline()  # wait for an index sync
         tip = line.decode().strip()
-        LOG.info("pid=%s indexer at block=%s", indexer.pid, tip)
+        LOG.info("pid=%s indexer at block=%s", p.pid, tip)
+        return Indexer(p, tip)
 
+    async def sync(self) -> bool:
+        # update history index for the new scripthashes
+        self.p.stdin.write(b"\n")
+        await self.p.stdin.drain()
+
+        # wait for the index sync to finish
+        line = await self.p.stdout.readline()
+        prev_tip = self.tip
+        self.tip = line.decode().strip()
+        return prev_tip != self.tip
+
+
+async def sync_task(mgr: Manager, indexer: Indexer):
+    try:
         # sending new scripthashes on subscription requests
         while True:
             items = await get_items(mgr.sync)
             data = [[i] for i, _ in items]
             update_scripthashes(mgr.db.cursor(), data)
 
-            # update history index for the new scripthashes
-            indexer.stdin.write(b"\n")
-            await indexer.stdin.drain()
-
-            # wait for the index sync to finish
-            line = await indexer.stdout.readline()
-            new_tip = line.decode().strip()
-            chain_updated = new_tip != tip
-            tip = new_tip
-
+            # update history index for the new scripthashesfinish
+            chain_updated = await indexer.sync()
             if items or chain_updated:
-                LOG.info("indexer at block=%s: %d reqs", tip, len(items))
+                LOG.info("indexer at block=%s: %d reqs", indexer.tip, len(items))
 
             # mark subscription requests as done
             for _, ack_fn in items:
                 ack_fn()
 
             # make sure all sessions are notified
-            await mgr.notify_sessions(chain_updated)
+            if chain_updated:
+                await mgr.notify_sessions()
     except Exception:
         LOG.exception("sync_task() failed")
 
@@ -570,12 +583,12 @@ async def sync_task(mgr: Manager):
 async def main():
     FMT = "[%(asctime)-27s %(levelname)-5s %(module)s] %(message)s"
     logging.basicConfig(level="INFO", format=FMT)
-    # wait for initial index sync
+    indexer = await Indexer.start()  # wait for initial sync
     mgr = Manager()
     cls = functools.partial(ElectrumSession, mgr=mgr)
     await serve_rs(cls, host="localhost", port=50001)
     async with TaskGroup() as g:
-        await g.spawn(sync_task(mgr))
+        await g.spawn(sync_task(mgr, indexer))
         await g.join()
 
 
