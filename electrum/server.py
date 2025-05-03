@@ -464,6 +464,22 @@ class ElectrumSession(SessionBase):
         self.request_handlers = handlers
 
 
+async def get_items(q):
+    items = []
+    timeout = 1.0
+    try:
+        while True:
+            item = await asyncio.wait_for(q.get(), timeout)
+            items.append(item)
+            while not q.empty():
+                items.append(q.get_nowait())
+            # use a shorter timeout for coalescing subsequent subscriptions
+            timeout = 0.01
+    except asyncio.exceptions.TimeoutError:
+        pass
+    return items
+
+
 async def sync_task(sync_queue, db):
     try:
         # run bindex in the background
@@ -481,19 +497,7 @@ async def sync_task(sync_queue, db):
 
         # sending new scripthashes on subscription requests
         while True:
-            items = []
-            timeout = 1.0
-            try:
-                while True:
-                    item = await asyncio.wait_for(sync_queue.get(), timeout)
-                    items.append(item)
-                    while not sync_queue.empty():
-                        items.append(sync_queue.get_nowait())
-                    # use a shorter timeout for coalescing subsequent subscriptions
-                    timeout = 0.01
-            except asyncio.exceptions.TimeoutError:
-                pass
-
+            items = await get_items(sync_queue)
             # update bindex DB with the new scripthashes
             c = db.cursor()
             c.execute("BEGIN")
