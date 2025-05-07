@@ -1,9 +1,9 @@
 [package]
-name = "indexer"
+name = "electrum-indexer"
 version = "0.0.10"
 edition = "2021"
 authors = ["Roman Zeyde <me@romanzey.de>"]
-description = "Electrum history indexer in Rust"
+description = "Electrum indexer & basic server"
 license = "MIT"
 homepage = "https://github.com/romanz/bindex-rs"
 repository = "https://github.com/romanz/bindex-rs"

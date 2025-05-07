@@ -13,10 +13,7 @@ import functools
 import itertools
 import logging
 import sqlite3
-import subprocess
 import sys
-from pathlib import Path
-from asyncio.subprocess import Process
 
 from aiorpcx import TaskGroup
 from aiorpcx import (
@@ -48,10 +45,6 @@ class Env:
 
 
 VERSION = "electrs/0.999999"  # HACK: let Sparrow use batching
-
-HERE = Path(__file__).resolve()
-BINARY = HERE.parent.parent / "target" / "release" / "indexer"
-assert BINARY.exists(), BINARY
 
 LOG = logging.getLogger()
 
@@ -524,35 +517,37 @@ def update_scripthashes(c: sqlite3.Cursor, data: list[bytes]):
 
 
 class Indexer:
-    def __init__(self, p: Process, tip: str):
-        self.p = p
-        self.tip = tip
+    def __init__(self):
+        self.tip = None
+        self._loop = asyncio.get_running_loop()
+
+    async def _readline(self) -> str:
+        return await self._loop.run_in_executor(None, sys.stdin.readline)
+
+    async def _write(self, data: bytes):
+        def write_fn():
+            sys.stdout.write(data)
+            sys.stdout.flush()
+
+        await self._loop.run_in_executor(None, write_fn)
 
     @classmethod
     async def start(cls) -> "Indexer":
-        # run bindex in the background
-        p = await asyncio.create_subprocess_exec(
-            BINARY,
-            "-c",
-            CACHE_DB,
-            env={"RUST_LOG": "INFO", "RUST_BACKTRACE": "full"},
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-        )
-        line = await p.stdout.readline()  # wait for an index sync
-        tip = line.decode().strip()
-        LOG.info("pid=%s indexer at block=%s", p.pid, tip)
-        return Indexer(p, tip)
+        i = Indexer()
+        line = await i._readline()  # wait for an index sync
+        i.tip = line.strip()
+        LOG.info("indexer at block=%r", i.tip)
+        return i
 
     async def sync(self) -> bool:
         # update history index for the new scripthashes
-        self.p.stdin.write(b"\n")
-        await self.p.stdin.drain()
+        await self._write("\n")
 
         # wait for the index sync to finish
-        line = await self.p.stdout.readline()
+        line = await self._readline()
         prev_tip = self.tip
-        self.tip = line.decode().strip()
+        self.tip = line.strip()
+        LOG.debug("indexer at block=%r", self.tip)
         return prev_tip != self.tip
 
 
@@ -567,7 +562,7 @@ async def sync_task(mgr: Manager, indexer: Indexer):
             # update history index for the new scripthashesfinish
             chain_updated = await indexer.sync()
             if items or chain_updated:
-                LOG.info("indexer at block=%s: %d reqs", indexer.tip, len(items))
+                LOG.info("indexer at block=%r: %d reqs", indexer.tip, len(items))
 
             # mark subscription requests as done
             for _, ack_fn in items:

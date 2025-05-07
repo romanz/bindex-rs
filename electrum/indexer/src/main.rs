@@ -1,10 +1,15 @@
-use std::path::{Path, PathBuf};
+use std::{
+    io::{BufRead, BufReader, Write},
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+};
 
 use bindex::{
     address::{self, cache},
     cli,
 };
 use clap::Parser;
+use log::{debug, info};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -28,6 +33,18 @@ fn main() -> Result<()> {
     let mut index = address::Index::open_default(args.network)?;
     let mut line = String::new();
 
+    let mut server = Command::new("python")
+        .arg("-m")
+        .arg("electrum.server")
+        .arg(args.cache_file)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()?;
+    info!("Launched server @ pid={}", server.id());
+
+    let mut child_stdin = server.stdin.take().unwrap();
+    let mut child_stdout = BufReader::new(server.stdout.take().unwrap());
+
     let mut tip = None;
     loop {
         let new_tip = loop {
@@ -40,8 +57,12 @@ fn main() -> Result<()> {
             cache.sync(&index)?;
             tip = Some(new_tip);
         }
-        println!("{}", new_tip); // notify Electrum server
+        // notify Electrum server
+        debug!("chain best block={}", new_tip);
+        writeln!(child_stdin, "{}", new_tip)?;
+        child_stdin.flush()?;
+
         line.clear();
-        std::io::stdin().read_line(&mut line)?; // wait for notification
+        child_stdout.read_line(&mut line)?; // wait for notification
     }
 }
