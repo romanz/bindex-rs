@@ -3,5 +3,4 @@ resolver = "2"
 members = [
     "bindex-cli",
     "bindex-lib",
-    "electrum/indexer"
 ]

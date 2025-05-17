@@ -1,6 +1,6 @@
 use bindex::{
     address::{self, cache},
-    bitcoin::{self, consensus::deserialize, hashes::Hash, Txid},
+    bitcoin::{self, consensus::deserialize, hashes::Hash, BlockHash, Txid},
     cli,
 };
 use chrono::{TimeZone, Utc};
@@ -8,8 +8,9 @@ use clap::Parser;
 use log::*;
 use std::{
     collections::HashSet,
-    io::Read,
+    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
+    process::{ChildStdin, ChildStdout, Command, Stdio},
     str::FromStr,
     thread,
     time::Instant,
@@ -175,6 +176,10 @@ struct Args {
     /// Exit after one sync is over
     #[arg(short = '1', long = "sync-once", default_value_t = false)]
     sync_once: bool,
+
+    /// Start Electrum server
+    #[arg(short = 'e', long = "electrum", default_value_t = false)]
+    electrum: bool,
 }
 
 fn collect_addresses(args: &Args) -> Result<HashSet<bitcoin::Address>> {
@@ -198,6 +203,47 @@ fn collect_addresses(args: &Args) -> Result<HashSet<bitcoin::Address>> {
     Ok(addresses)
 }
 
+struct Electrum {
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    line: String,
+}
+
+impl Electrum {
+    fn start(cache_file: &Path) -> Result<Self> {
+        let mut server = Command::new("python")
+            .arg("-m")
+            .arg("electrum.server")
+            .arg(cache_file)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?;
+        info!("Launched server @ pid={}", server.id());
+
+        let stdin = server.stdin.take().unwrap();
+        let stdout = BufReader::new(server.stdout.take().unwrap());
+
+        Ok(Self {
+            stdin,
+            stdout,
+            line: String::new(),
+        })
+    }
+
+    fn notify(&mut self, new_tip: BlockHash) -> Result<()> {
+        debug!("chain best block={}", new_tip);
+        writeln!(self.stdin, "{}", new_tip)?;
+        self.stdin.flush()?;
+        Ok(())
+    }
+
+    fn wait(&mut self) -> Result<()> {
+        self.line.clear();
+        self.stdout.read_line(&mut self.line)?; // wait for notification
+        Ok(())
+    }
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
     env_logger::builder().format_timestamp_micros().init();
@@ -209,22 +255,38 @@ fn main() -> Result<()> {
     let cache = cache::Cache::open(cache_db)?;
     cache.add(collect_addresses(&args)?)?;
 
+    let mut server = None;
+    if args.electrum {
+        let cache_file = args
+            .cache_file
+            .ok_or("Electrum requires setting a cache file")?;
+        server = Some(Electrum::start(&cache_file)?);
+    }
     let mut index = address::Index::open_default(args.network)?;
-    let mut updated = true; // to sync the cache on first iteration
+    let mut tip = None;
     loop {
-        while index.sync_chain(1000)?.indexed_blocks > 0 {
-            updated = true;
-        }
-        if updated {
+        let new_tip = loop {
+            let stats = index.sync_chain(1000)?;
+            if stats.indexed_blocks == 0 {
+                break stats.tip;
+            }
+        };
+        if tip != Some(new_tip) {
             cache.sync(&index)?;
+            tip = Some(new_tip);
             let entries = get_history(cache.db())?;
             print_history(entries, args.history_limit);
         }
         if args.sync_once {
             break;
         }
-        updated = false;
-        thread::sleep(std::time::Duration::from_secs(1));
+        match server.as_mut() {
+            Some(s) => {
+                s.notify(new_tip)?;
+                s.wait()?;
+            }
+            None => thread::sleep(std::time::Duration::from_secs(1)),
+        }
     }
     Ok(())
 }
