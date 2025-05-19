@@ -56,8 +56,8 @@ impl Client {
             }
             warn!("unavailable {}: {:?}", url, err);
             std::thread::sleep(Duration::from_secs(1));
-            continue;
         };
+        error!("GET {} failed: {:?}", url, err);
         Err(Error::Http(err))
     }
 
@@ -90,7 +90,7 @@ impl Client {
     }
 
     pub fn get_spent_bytes(&self, hash: BlockHash) -> Result<index::SpentBytes, Error> {
-        let url = format!("{}/rest/spentoutputs/{}.bin", self.url, hash);
+        let url = format!("{}/rest/spenttxouts/{}.bin", self.url, hash);
         let data = self.get_bytes(&url)?;
         Ok(index::SpentBytes::new(data))
     }
