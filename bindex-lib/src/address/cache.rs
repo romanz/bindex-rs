@@ -3,7 +3,7 @@ use std::{collections::BTreeSet, fmt::Debug};
 use bitcoin::{
     consensus::{deserialize, serialize},
     hashes::Hash,
-    Txid,
+    BlockHash, Txid,
 };
 use bitcoin_slices::{bsl, Parse};
 use log::*;
@@ -106,6 +106,7 @@ impl Cache {
                 script_hash BLOB NOT NULL,
                 script_bytes BLOB,
                 address TEXT,
+                is_active BOOLEAN,   -- is this address being actively watched (starts as NULL)
                 PRIMARY KEY (script_hash)
             ) WITHOUT ROWID",
             (),
@@ -113,9 +114,12 @@ impl Cache {
         Ok(())
     }
 
-    pub fn sync(&self, index: &address::Index) -> Result<(), Error> {
+    pub fn sync(&self, index: &address::Index, new_tip: BlockHash) -> Result<bool, Error> {
         self.run("sync", || {
             self.drop_stale_blocks(&index.chain)?;
+            if Some(new_tip) == index.chain.tip_hash() && self.all_active()? {
+                return Ok(false);
+            }
             let new_history = self.new_history(index)?;
             let new_locations: BTreeSet<_> = new_history.iter().map(|(_, loc)| loc).collect();
             let new_headers: BTreeSet<_> = new_locations
@@ -135,8 +139,20 @@ impl Cache {
             self.sync_headers(new_headers.into_iter())?;
             self.sync_transactions(new_locations.into_iter(), index)?;
             self.sync_history(new_history.into_iter())?;
-            Ok(())
+            self.sync_watch()?;
+            Ok(true)
         })
+    }
+
+    pub fn all_active(&self) -> Result<bool, Error> {
+        Ok(self.db.query_row(
+            "SELECT EXISTS (SELECT 1 FROM watch WHERE NOT ifnull(is_active, FALSE))",
+            [],
+            |row| {
+                let has_inactive: bool = row.get(0)?;
+                Ok(!has_inactive)
+            },
+        )?)
     }
 
     pub fn drop_stale_blocks(&self, chain: &Chain) -> Result<(), Error> {
@@ -306,6 +322,12 @@ impl Cache {
         Ok(rows)
     }
 
+    fn sync_watch(&self) -> Result<usize, Error> {
+        Ok(self
+            .db
+            .prepare("UPDATE watch SET is_active = TRUE")?
+            .execute([])?)
+    }
     fn last_indexed_header<'a>(
         &self,
         script_hash: &ScriptHash,
@@ -332,7 +354,7 @@ impl Cache {
     pub fn add(&self, addresses: impl IntoIterator<Item = bitcoin::Address>) -> Result<(), Error> {
         let mut insert = self
             .db
-            .prepare("INSERT OR IGNORE INTO watch VALUES (?1, ?2, ?3)")?;
+            .prepare("INSERT OR IGNORE INTO watch VALUES (?1, ?2, ?3, NULL)")?;
         let mut rows = 0;
         for addr in addresses {
             let script = addr.script_pubkey();

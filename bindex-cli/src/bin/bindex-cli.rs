@@ -263,7 +263,7 @@ fn main() -> Result<()> {
         server = Some(Electrum::start(&cache_file)?);
     }
     let mut index = address::Index::open_default(args.network)?;
-    let mut tip = None;
+    let mut first = true;
     loop {
         let new_tip = loop {
             let stats = index.sync_chain(1000)?;
@@ -271,9 +271,8 @@ fn main() -> Result<()> {
                 break stats.tip;
             }
         };
-        if tip != Some(new_tip) {
-            cache.sync(&index)?;
-            tip = Some(new_tip);
+        if cache.sync(&index, new_tip)? || first {
+            first = false;
             let entries = get_history(cache.db())?;
             print_history(entries, args.history_limit);
         }
@@ -283,7 +282,7 @@ fn main() -> Result<()> {
         match server.as_mut() {
             Some(s) => {
                 s.notify(new_tip)?;
-                s.wait()?;
+                s.wait()?; // Electrum should send an ACK for an index sync request
             }
             None => thread::sleep(std::time::Duration::from_secs(1)),
         }
