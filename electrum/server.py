@@ -53,7 +53,7 @@ class Manager:
     def __init__(self):
         self.db = sqlite3.connect(CACHE_DB)
         self.merkle = merkle.Merkle()
-        self.sync: asyncio.Queue = asyncio.Queue(50)
+        self.sync_queue: asyncio.Queue = asyncio.Queue(50)
         self.sessions: set[ElectrumSession] = set()
 
     async def notify_sessions(self):
@@ -98,7 +98,7 @@ ORDER BY
 
     async def subscribe(self, hashX: bytes):
         event = asyncio.Event()
-        await self.sync.put((hashX, event.set))
+        await self.sync_queue.put((hashX, event.set))
         await event.wait()
 
     async def _merkle_branch(self, height, tx_hashes, tx_pos):
@@ -555,7 +555,7 @@ async def sync_task(mgr: Manager, indexer: Indexer):
     try:
         # sending new scripthashes on subscription requests
         while True:
-            items = await get_items(mgr.sync)
+            items = await get_items(mgr.sync_queue)
             data = [[i] for i, _ in items]
             update_scripthashes(mgr.db.cursor(), data)
 
