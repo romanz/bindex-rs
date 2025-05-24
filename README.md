@@ -7,9 +7,10 @@ See [slides](https://docs.google.com/presentation/d/1Zez-6DApKRu59kke4i_g9jwxQla
 
 ## Requirements
 
-Currently, building an address index and querying it requires the following Bitcoin Core branch:
+Currently, building an address index and querying it requires the following Bitcoin Core PRs:
 
-https://github.com/bitcoin/bitcoin/compare/master...romanz:bitcoin:bindex
+- https://github.com/bitcoin/bitcoin/pull/32540
+- https://github.com/bitcoin/bitcoin/pull/32541
 
 ## Usage
 
