@@ -162,7 +162,7 @@ struct Args {
     network: cli::Network,
 
     /// Limit on how many recent transactions to print
-    #[arg(short = 'l', long = "limit", default_value_t = 100)]
+    #[arg(short = 'l', long = "limit", default_value_t = 10)]
     history_limit: usize,
 
     /// Text file, containing white-space separated addresses to add
