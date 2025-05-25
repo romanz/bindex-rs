@@ -114,10 +114,11 @@ impl Cache {
         Ok(())
     }
 
-    pub fn sync(&self, index: &address::Index, new_tip: BlockHash) -> Result<bool, Error> {
+    pub fn sync(&self, index: &address::Index, tip: &mut BlockHash) -> Result<bool, Error> {
         self.run("sync", || {
             self.drop_stale_blocks(&index.chain)?;
-            if Some(new_tip) == index.chain.tip_hash() && self.all_active()? {
+            let new_tip = index.chain.tip_hash().unwrap_or_else(BlockHash::all_zeros);
+            if *tip == new_tip && self.all_active()? {
                 return Ok(false);
             }
             let new_history = self.new_history(index)?;
@@ -140,6 +141,7 @@ impl Cache {
             self.sync_transactions(new_locations.into_iter(), index)?;
             self.sync_history(new_history.into_iter())?;
             self.sync_watch()?;
+            *tip = new_tip;
             Ok(true)
         })
     }
