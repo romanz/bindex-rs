@@ -15,6 +15,9 @@ pub enum Error {
     #[error("client failed: {0}")]
     Client(#[from] client::Error),
 
+    #[error("use https://github.com/bitcoin/bitcoin/compare/master...romanz:bitcoin:bindex")]
+    NotSupported,
+
     #[error("indexing failed: {0:?}")]
     Index(#[from] index::Error),
 
@@ -62,6 +65,16 @@ impl Index {
         );
         let client = client::Client::new(agent, url);
         let genesis_hash = client.get_blockhash_by_height(0)?;
+
+        // make sure bitcoind supports required REST endpoints
+        match client.get_spent_bytes(genesis_hash) {
+            Err(client::Error::Http(ureq::Error::StatusCode(404))) => Err(Error::NotSupported)?,
+            res => res?,
+        };
+        match client.get_tx_bytes_from_block(genesis_hash, 0) {
+            Err(client::Error::Http(ureq::Error::StatusCode(404))) => Err(Error::NotSupported)?,
+            res => res?,
+        };
 
         let store = db::Store::open(db_path)?;
         let chain = chain::Chain::new(store.headers()?);
