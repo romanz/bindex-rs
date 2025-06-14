@@ -244,7 +244,7 @@ impl Electrum {
     }
 }
 
-fn main() -> Result<()> {
+fn run() -> Result<()> {
     let args = Args::parse();
     env_logger::builder().format_timestamp_micros().init();
     let cache_db = rusqlite::Connection::open(Path::new(match args.cache_file {
@@ -282,4 +282,10 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn main() {
+    if let Err(e) = run() {
+        error!("{}: {:?}", e, e)
+    }
 }
