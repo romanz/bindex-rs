@@ -12,6 +12,7 @@ import asyncio
 import functools
 import itertools
 import logging
+import os
 import sqlite3
 import sys
 
@@ -44,7 +45,11 @@ class Env:
     donation_address = None
 
 
-VERSION = "electrs/0.999999"  # HACK: let Sparrow use batching
+VERSION = os.environ.get("ELECTRUM_VERSION", "electrs/0.999")
+HOST = os.environ.get("ELECTRUM_HOST", "localhost")
+PORT = int(os.environ.get("ELECTRUM_PORT", 50001))
+
+BITCOIND_URL = os.environ.get("BITCOIN_URL", "http://localhost:8332")
 
 LOG = logging.getLogger()
 
@@ -71,7 +76,7 @@ class Manager:
 
     async def get(self, path, f):
         async with aiohttp.ClientSession() as session:
-            async with session.get(f"http://localhost:8332/rest/{path}") as response:
+            async with session.get(f"{BITCOIND_URL}/rest/{path}") as response:
                 response.raise_for_status()
                 return await f(response)
 
@@ -581,7 +586,7 @@ async def main():
     indexer = await Indexer.start()  # wait for initial sync
     mgr = Manager()
     cls = functools.partial(ElectrumSession, mgr=mgr)
-    await serve_rs(cls, host="localhost", port=50001)
+    await serve_rs(cls, host=HOST, port=PORT)
     async with TaskGroup() as g:
         await g.spawn(sync_task(mgr, indexer))
         await g.join()
