@@ -106,7 +106,7 @@ impl Index {
             cli::Network::Signet => 38332,
             cli::Network::Regtest => 18443,
         };
-        let default_rest_url = format!("http://localhost:{}", default_rpc_port);
+        let default_rest_url = format!("http://localhost:{default_rpc_port}");
         Self::open(default_db_path, default_rest_url)
     }
 

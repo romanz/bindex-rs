@@ -67,7 +67,7 @@ impl Store {
     fn cf(&self, name: &str) -> &rocksdb::ColumnFamily {
         self.db
             .cf_handle(name)
-            .unwrap_or_else(|| panic!("missing CF: {}", name))
+            .unwrap_or_else(|| panic!("missing CF: {name}"))
     }
 
     pub fn write(&self, batches: &[index::Batch]) -> Result<(), rocksdb::Error> {

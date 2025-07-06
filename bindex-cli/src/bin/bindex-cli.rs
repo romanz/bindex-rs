@@ -150,7 +150,7 @@ fn print_history(mut entries: Vec<Entry>, history_limit: usize) {
                 tabled::settings::Alignment::center(),
             );
         }
-        println!("{}", tbl);
+        println!("{tbl}");
     }
 }
 
@@ -232,7 +232,7 @@ impl Electrum {
 
     fn notify(&mut self, new_tip: BlockHash) -> Result<()> {
         debug!("chain best block={}", new_tip);
-        writeln!(self.stdin, "{}", new_tip)?;
+        writeln!(self.stdin, "{new_tip}")?;
         self.stdin.flush()?;
         Ok(())
     }
