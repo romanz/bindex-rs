@@ -49,7 +49,7 @@ VERSION = os.environ.get("ELECTRUM_VERSION", "electrs/0.999")
 HOST = os.environ.get("ELECTRUM_HOST", "localhost")
 PORT = int(os.environ.get("ELECTRUM_PORT", 50001))
 
-BITCOIND_URL = os.environ.get("BITCOIN_URL", "http://localhost:8332")
+BITCOIND_URL = os.environ.get("BITCOIND_URL", "http://localhost:8332")
 
 LOG = logging.getLogger()
 
