@@ -9,12 +9,16 @@
 
 import aiohttp
 import asyncio
+import base64
 import functools
 import itertools
+import json
 import logging
 import os
 import sqlite3
 import sys
+
+from pathlib import Path
 
 from aiorpcx import TaskGroup
 from aiorpcx import (
@@ -50,6 +54,8 @@ HOST = os.environ.get("ELECTRUM_HOST", "localhost")
 PORT = int(os.environ.get("ELECTRUM_PORT", 50001))
 
 BITCOIND_URL = os.environ.get("BITCOIND_URL", "http://localhost:8332")
+BITCOIND_COOKIE_PATH = Path(os.environ["BITCOIND_COOKIE_PATH"]).read_bytes()
+AUTH_HEADER = f"Basic {base64.b64encode(BITCOIND_COOKIE_PATH).decode()}"
 
 
 async def rest_get(path, f):
@@ -57,6 +63,20 @@ async def rest_get(path, f):
         async with session.get(f"{BITCOIND_URL}/rest/{path}") as response:
             response.raise_for_status()
             return await f(response)
+
+
+async def json_rpc(method, *params):
+    async with aiohttp.ClientSession() as session:
+        headers = {
+            "Authorization": AUTH_HEADER,
+        }
+        data = json.dumps(
+            {"method": method, "params": params, "id": 0, "jsonrpc": "2.0"}
+        )
+        async with session.post(BITCOIND_URL, headers=headers, data=data) as response:
+            response.raise_for_status()
+            json_obj = await response.json()
+            return json_obj["result"]
 
 
 LOG = logging.getLogger()
@@ -466,6 +486,12 @@ class ElectrumSession(SessionBase):
         )
         return {"block_height": height, "merkle": branch, "pos": tx_pos}
 
+    async def transaction_broadcast(self, tx_hex):
+        assert hex_to_bytes(tx_hex)
+        txid = await json_rpc("sendrawtransaction", tx_hex)
+        assert_tx_hash(txid)
+        return txid
+
     async def compact_fee_histogram(self):
         return []
 
@@ -480,6 +506,7 @@ class ElectrumSession(SessionBase):
             "blockchain.scripthash.subscribe": self.scripthash_subscribe,
             "blockchain.transaction.get": self.transaction_get,
             "blockchain.transaction.get_merkle": self.transaction_merkle,
+            "blockchain.transaction.broadcast": self.transaction_broadcast,
             "mempool.get_fee_histogram": self.compact_fee_histogram,
             "server.add_peer": self.add_peer,
             "server.banner": self.banner,
@@ -587,8 +614,10 @@ async def main():
     logging.basicConfig(level="INFO", format=FMT)
 
     info = await rest_get("chaininfo.json", lambda r: r.json())
-    logging.info("Bitcoin Core %s @ %s", info["chain"], BITCOIND_URL)
+    chain = info["chain"]
+    blocks = info["blocks"]
     logging.info("Electrum server '%s' @ %s:%s", VERSION, HOST, PORT)
+    logging.info("Bitcoin Core %s @ %s, %d blocks", chain, BITCOIND_URL, blocks)
 
     indexer = await Indexer.start()  # wait for initial sync
     mgr = Manager()
