@@ -56,11 +56,11 @@ impl TxNum {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
-pub struct ScriptHashPrefixRow {
-    key: [u8; ScriptHashPrefixRow::LEN],
+pub struct HashPrefixRow {
+    key: [u8; HashPrefixRow::LEN],
 }
 
-impl ScriptHashPrefixRow {
+impl HashPrefixRow {
     const LEN: usize = HashPrefix::LEN + TxNum::LEN;
 
     pub fn new(prefix: HashPrefix, txnum: TxNum) -> Self {
@@ -87,12 +87,12 @@ impl ScriptHashPrefixRow {
 
 #[derive(Debug, PartialEq, Eq)]
 struct IndexVisitor<'a> {
-    rows: &'a mut Vec<ScriptHashPrefixRow>,
+    rows: &'a mut Vec<HashPrefixRow>,
     txnum: TxNum,
 }
 
 impl<'a> IndexVisitor<'a> {
-    fn new(txnum: TxNum, rows: &'a mut Vec<ScriptHashPrefixRow>) -> Self {
+    fn new(txnum: TxNum, rows: &'a mut Vec<HashPrefixRow>) -> Self {
         Self { txnum, rows }
     }
 
@@ -102,7 +102,7 @@ impl<'a> IndexVisitor<'a> {
             return;
         }
         let script_hash = ScriptHash::new(script);
-        self.rows.push(ScriptHashPrefixRow::new(
+        self.rows.push(HashPrefixRow::new(
             HashPrefix::new(&script_hash),
             self.txnum,
         ));
@@ -159,7 +159,7 @@ fn visit_spent<'a>(
 fn add_block_rows(
     block: &BlockBytes,
     txnum: TxNum,
-    rows: &mut Vec<ScriptHashPrefixRow>,
+    rows: &mut Vec<HashPrefixRow>,
 ) -> Result<TxNum, Error> {
     let mut visitor = IndexVisitor::new(txnum, rows);
     let res = bsl::Block::visit(&block.0, &mut visitor).map_err(Error::Parse)?;
@@ -172,7 +172,7 @@ fn add_block_rows(
 fn add_spent_rows(
     spent: &SpentBytes,
     txnum: TxNum,
-    rows: &mut Vec<ScriptHashPrefixRow>,
+    rows: &mut Vec<HashPrefixRow>,
 ) -> Result<TxNum, Error> {
     let mut visitor = IndexVisitor::new(txnum, rows);
     let res = visit_spent(&spent.0, &mut visitor).map_err(Error::Parse)?;
@@ -263,7 +263,7 @@ impl SpentBytes {
 }
 
 pub struct Batch {
-    pub script_hash_rows: Vec<ScriptHashPrefixRow>,
+    pub script_hash_rows: Vec<HashPrefixRow>,
     pub header: Header,
 }
 
@@ -355,12 +355,12 @@ mod tests {
         assert_eq!(
             block_rows,
             vec![
-                ScriptHashPrefixRow::new(HashPrefix(hex!("e2151d493a1f9999")), TxNum(10)),
-                ScriptHashPrefixRow::new(HashPrefix(hex!("050b00fb9d5f7a63")), TxNum(11)),
-                ScriptHashPrefixRow::new(HashPrefix(hex!("b5a1091a739a6aba")), TxNum(11)),
-                ScriptHashPrefixRow::new(HashPrefix(hex!("03b0bfb44fd9d852")), TxNum(12)),
-                ScriptHashPrefixRow::new(HashPrefix(hex!("0faa9934b57389f2")), TxNum(12)),
-                ScriptHashPrefixRow::new(HashPrefix(hex!("4a569bc2092bcaf9")), TxNum(13))
+                HashPrefixRow::new(HashPrefix(hex!("e2151d493a1f9999")), TxNum(10)),
+                HashPrefixRow::new(HashPrefix(hex!("050b00fb9d5f7a63")), TxNum(11)),
+                HashPrefixRow::new(HashPrefix(hex!("b5a1091a739a6aba")), TxNum(11)),
+                HashPrefixRow::new(HashPrefix(hex!("03b0bfb44fd9d852")), TxNum(12)),
+                HashPrefixRow::new(HashPrefix(hex!("0faa9934b57389f2")), TxNum(12)),
+                HashPrefixRow::new(HashPrefix(hex!("4a569bc2092bcaf9")), TxNum(13))
             ]
         );
 
@@ -373,9 +373,9 @@ mod tests {
         assert_eq!(
             spent_rows,
             vec![
-                ScriptHashPrefixRow::new(HashPrefix(hex!("4d5bea28470692cd")), TxNum(11)),
-                ScriptHashPrefixRow::new(HashPrefix(hex!("e9b09b065b5f43c2")), TxNum(12)),
-                ScriptHashPrefixRow::new(HashPrefix(hex!("2e7cdb30882b427d")), TxNum(13)),
+                HashPrefixRow::new(HashPrefix(hex!("4d5bea28470692cd")), TxNum(11)),
+                HashPrefixRow::new(HashPrefix(hex!("e9b09b065b5f43c2")), TxNum(12)),
+                HashPrefixRow::new(HashPrefix(hex!("2e7cdb30882b427d")), TxNum(13)),
             ]
         );
 
@@ -401,7 +401,7 @@ mod tests {
     fn decode_spent(
         buf: &[u8],
         txnum: TxNum,
-        rows: &mut Vec<ScriptHashPrefixRow>,
+        rows: &mut Vec<HashPrefixRow>,
     ) -> Result<TxNum, Error> {
         let mut visitor = IndexVisitor::new(txnum, rows);
         let mut r = bitcoin::io::Cursor::new(buf);
@@ -425,11 +425,11 @@ mod tests {
     #[test]
     fn test_serde_row() {
         let txnum = TxNum(0x123456789ABCDEF0);
-        let row = ScriptHashPrefixRow::new(HashPrefix([1, 2, 3, 4, 5, 6, 7, 8]), txnum);
+        let row = HashPrefixRow::new(HashPrefix([1, 2, 3, 4, 5, 6, 7, 8]), txnum);
         assert_eq!(row.txnum(), txnum);
         let data = row.key;
         assert_eq!(data, hex!("0102030405060708123456789abcdef0"));
-        assert_eq!(ScriptHashPrefixRow::from_bytes(data), row);
+        assert_eq!(HashPrefixRow::from_bytes(data), row);
     }
 
     #[test]

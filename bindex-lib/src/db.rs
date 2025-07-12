@@ -82,7 +82,7 @@ impl Store {
                 batch
                     .script_hash_rows
                     .iter()
-                    .map(index::ScriptHashPrefixRow::key),
+                    .map(index::HashPrefixRow::key),
             );
         }
         script_hash_rows.sort_unstable();
@@ -111,7 +111,7 @@ impl Store {
                 batch
                     .script_hash_rows
                     .iter()
-                    .map(index::ScriptHashPrefixRow::key),
+                    .map(index::HashPrefixRow::key),
             );
         }
         // ScriptHashPrefixRow::key contains txnum, so it is safe to delete
@@ -163,14 +163,14 @@ impl Store {
         let mut positions = Vec::new();
 
         let prefix = index::HashPrefix::new(script_hash);
-        let start = index::ScriptHashPrefixRow::new(prefix, from);
+        let start = index::HashPrefixRow::new(prefix, from);
         let mode = rocksdb::IteratorMode::From(start.key(), rocksdb::Direction::Forward);
         for kv in self.db.iterator_cf(cf, mode) {
             let (key, _) = kv?;
             if !key.starts_with(prefix.as_bytes()) {
                 break;
             }
-            let row = index::ScriptHashPrefixRow::from_bytes(key[..].try_into().unwrap());
+            let row = index::HashPrefixRow::from_bytes(key[..].try_into().unwrap());
             assert!(row.txnum() >= from);
             positions.push(row.txnum());
         }
