@@ -585,6 +585,11 @@ async def sync_task(mgr: Manager, indexer: Indexer):
 async def main():
     FMT = "[%(asctime)-27s %(levelname)-5s %(module)s] %(message)s"
     logging.basicConfig(level="INFO", format=FMT)
+
+    info = await rest_get("chaininfo.json", lambda r: r.json())
+    logging.info("Bitcoin Core %s @ %s", info["chain"], BITCOIND_URL)
+    logging.info("Electrum server '%s' @ %s:%s", VERSION, HOST, PORT)
+
     indexer = await Indexer.start()  # wait for initial sync
     mgr = Manager()
     cls = functools.partial(ElectrumSession, mgr=mgr)
