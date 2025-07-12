@@ -51,6 +51,14 @@ PORT = int(os.environ.get("ELECTRUM_PORT", 50001))
 
 BITCOIND_URL = os.environ.get("BITCOIND_URL", "http://localhost:8332")
 
+
+async def rest_get(path, f):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"{BITCOIND_URL}/rest/{path}") as response:
+            response.raise_for_status()
+            return await f(response)
+
+
 LOG = logging.getLogger()
 
 
@@ -74,14 +82,8 @@ class Manager:
         raw = await self.raw_header(height)
         return {"hex": raw.hex(), "height": height}
 
-    async def get(self, path, f):
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"{BITCOIND_URL}/rest/{path}") as response:
-                response.raise_for_status()
-                return await f(response)
-
     async def chaininfo(self):
-        return await self.get("chaininfo.json", lambda r: r.json())
+        return await rest_get("chaininfo.json", lambda r: r.json())
 
     async def get_history(self, hashx: bytes):
         query = """
@@ -130,8 +132,8 @@ ORDER BY
         tx_hashes is an ordered list of binary hashes.  Raises RPCError.
         """
 
-        h = await self.get(f"blockhashbyheight/{height}.hex", lambda r: r.text())
-        j = await self.get(f"block/notxdetails/{h}.json", lambda r: r.json())
+        h = await rest_get(f"blockhashbyheight/{height}.hex", lambda r: r.text())
+        j = await rest_get(f"block/notxdetails/{h}.json", lambda r: r.json())
         tx_hashes = [hex_str_to_hash(h) for h in j["tx"]]
         return tx_hashes
 
@@ -151,9 +153,9 @@ ORDER BY
     async def raw_headers(self, height: int, count: int):
         chunks = []
         while count > 0:
-            h = await self.get(f"blockhashbyheight/{height}.hex", lambda r: r.text())
+            h = await rest_get(f"blockhashbyheight/{height}.hex", lambda r: r.text())
             chunk_size = min(count, MAX_CHUNK_SIZE // 2)
-            chunk = await self.get(f"headers/{chunk_size}/{h}.bin", lambda r: r.read())
+            chunk = await rest_get(f"headers/{chunk_size}/{h}.bin", lambda r: r.read())
             assert len(chunk) % 80 == 0
             chunk_size = len(chunk) // 80
             assert chunk_size <= count
