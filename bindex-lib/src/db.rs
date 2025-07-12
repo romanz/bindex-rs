@@ -78,12 +78,7 @@ impl Store {
         let cf = self.cf(SCRIPT_HASH_CF);
         let mut script_hash_rows = vec![];
         for batch in batches {
-            script_hash_rows.extend(
-                batch
-                    .script_hash_rows
-                    .iter()
-                    .map(index::HashPrefixRow::key),
-            );
+            script_hash_rows.extend(batch.script_hash_rows.iter().map(index::HashPrefixRow::key));
         }
         script_hash_rows.sort_unstable();
         for row in script_hash_rows {
@@ -107,12 +102,7 @@ impl Store {
         let cf = self.cf(SCRIPT_HASH_CF);
         let mut script_hash_rows = vec![];
         for batch in batches {
-            script_hash_rows.extend(
-                batch
-                    .script_hash_rows
-                    .iter()
-                    .map(index::HashPrefixRow::key),
-            );
+            script_hash_rows.extend(batch.script_hash_rows.iter().map(index::HashPrefixRow::key));
         }
         // ScriptHashPrefixRow::key contains txnum, so it is safe to delete
         script_hash_rows.sort_unstable();
