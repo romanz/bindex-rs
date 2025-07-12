@@ -30,13 +30,13 @@ impl ScriptHash {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
-pub struct ScriptHashPrefix([u8; ScriptHashPrefix::LEN]);
+pub struct HashPrefix([u8; HashPrefix::LEN]);
 
-impl ScriptHashPrefix {
+impl HashPrefix {
     const LEN: usize = 8;
 
     pub fn new(script_hash: &ScriptHash) -> Self {
-        Self(script_hash[..ScriptHashPrefix::LEN].try_into().unwrap())
+        Self(script_hash[..HashPrefix::LEN].try_into().unwrap())
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -61,12 +61,12 @@ pub struct ScriptHashPrefixRow {
 }
 
 impl ScriptHashPrefixRow {
-    const LEN: usize = ScriptHashPrefix::LEN + TxNum::LEN;
+    const LEN: usize = HashPrefix::LEN + TxNum::LEN;
 
-    pub fn new(prefix: ScriptHashPrefix, txnum: TxNum) -> Self {
-        let mut result = [0u8; ScriptHashPrefix::LEN + TxNum::LEN];
-        result[..ScriptHashPrefix::LEN].copy_from_slice(&prefix.0);
-        result[ScriptHashPrefix::LEN..].copy_from_slice(&txnum.0.to_be_bytes());
+    pub fn new(prefix: HashPrefix, txnum: TxNum) -> Self {
+        let mut result = [0u8; HashPrefix::LEN + TxNum::LEN];
+        result[..HashPrefix::LEN].copy_from_slice(&prefix.0);
+        result[HashPrefix::LEN..].copy_from_slice(&txnum.0.to_be_bytes());
         Self { key: result }
     }
 
@@ -80,7 +80,7 @@ impl ScriptHashPrefixRow {
 
     pub fn txnum(&self) -> TxNum {
         TxNum(u64::from_be_bytes(
-            self.key[ScriptHashPrefix::LEN..].try_into().unwrap(),
+            self.key[HashPrefix::LEN..].try_into().unwrap(),
         ))
     }
 }
@@ -103,7 +103,7 @@ impl<'a> IndexVisitor<'a> {
         }
         let script_hash = ScriptHash::new(script);
         self.rows.push(ScriptHashPrefixRow::new(
-            ScriptHashPrefix::new(&script_hash),
+            HashPrefix::new(&script_hash),
             self.txnum,
         ));
     }
@@ -355,12 +355,12 @@ mod tests {
         assert_eq!(
             block_rows,
             vec![
-                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("e2151d493a1f9999")), TxNum(10)),
-                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("050b00fb9d5f7a63")), TxNum(11)),
-                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("b5a1091a739a6aba")), TxNum(11)),
-                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("03b0bfb44fd9d852")), TxNum(12)),
-                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("0faa9934b57389f2")), TxNum(12)),
-                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("4a569bc2092bcaf9")), TxNum(13))
+                ScriptHashPrefixRow::new(HashPrefix(hex!("e2151d493a1f9999")), TxNum(10)),
+                ScriptHashPrefixRow::new(HashPrefix(hex!("050b00fb9d5f7a63")), TxNum(11)),
+                ScriptHashPrefixRow::new(HashPrefix(hex!("b5a1091a739a6aba")), TxNum(11)),
+                ScriptHashPrefixRow::new(HashPrefix(hex!("03b0bfb44fd9d852")), TxNum(12)),
+                ScriptHashPrefixRow::new(HashPrefix(hex!("0faa9934b57389f2")), TxNum(12)),
+                ScriptHashPrefixRow::new(HashPrefix(hex!("4a569bc2092bcaf9")), TxNum(13))
             ]
         );
 
@@ -373,9 +373,9 @@ mod tests {
         assert_eq!(
             spent_rows,
             vec![
-                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("4d5bea28470692cd")), TxNum(11)),
-                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("e9b09b065b5f43c2")), TxNum(12)),
-                ScriptHashPrefixRow::new(ScriptHashPrefix(hex!("2e7cdb30882b427d")), TxNum(13)),
+                ScriptHashPrefixRow::new(HashPrefix(hex!("4d5bea28470692cd")), TxNum(11)),
+                ScriptHashPrefixRow::new(HashPrefix(hex!("e9b09b065b5f43c2")), TxNum(12)),
+                ScriptHashPrefixRow::new(HashPrefix(hex!("2e7cdb30882b427d")), TxNum(13)),
             ]
         );
 
@@ -425,7 +425,7 @@ mod tests {
     #[test]
     fn test_serde_row() {
         let txnum = TxNum(0x123456789ABCDEF0);
-        let row = ScriptHashPrefixRow::new(ScriptHashPrefix([1, 2, 3, 4, 5, 6, 7, 8]), txnum);
+        let row = ScriptHashPrefixRow::new(HashPrefix([1, 2, 3, 4, 5, 6, 7, 8]), txnum);
         assert_eq!(row.txnum(), txnum);
         let data = row.key;
         assert_eq!(data, hex!("0102030405060708123456789abcdef0"));

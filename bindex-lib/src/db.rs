@@ -162,7 +162,7 @@ impl Store {
         let cf = self.cf(SCRIPT_HASH_CF);
         let mut positions = Vec::new();
 
-        let prefix = index::ScriptHashPrefix::new(script_hash);
+        let prefix = index::HashPrefix::new(script_hash);
         let start = index::ScriptHashPrefixRow::new(prefix, from);
         let mode = rocksdb::IteratorMode::From(start.key(), rocksdb::Direction::Forward);
         for kv in self.db.iterator_cf(cf, mode) {
