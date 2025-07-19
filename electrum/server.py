@@ -54,8 +54,10 @@ HOST = os.environ.get("ELECTRUM_HOST", "localhost")
 PORT = int(os.environ.get("ELECTRUM_PORT", 50001))
 
 BITCOIND_URL = os.environ.get("BITCOIND_URL", "http://localhost:8332")
-BITCOIND_COOKIE_PATH = Path(os.environ["BITCOIND_COOKIE_PATH"]).read_bytes()
-AUTH_HEADER = f"Basic {base64.b64encode(BITCOIND_COOKIE_PATH).decode()}"
+
+BITCOIND_COOKIE_PATH = os.environ.get("BITCOIND_COOKIE_PATH", "~/.bitcoin/.cookie")
+BITCOIND_COOKIE = Path(BITCOIND_COOKIE_PATH).expanduser().read_bytes()
+AUTH_HEADER = f"Basic {base64.b64encode(BITCOIND_COOKIE).decode()}"
 
 
 async def rest_get(path, f):
