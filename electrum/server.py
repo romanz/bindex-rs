@@ -522,9 +522,8 @@ class ElectrumSession(SessionBase):
         self.request_handlers = handlers
 
 
-async def get_items(q: asyncio.Queue):
+async def get_items(q: asyncio.Queue, timeout=1.0):
     items = []
-    timeout = 1.0
     try:
         while True:
             item = await asyncio.wait_for(q.get(), timeout)
