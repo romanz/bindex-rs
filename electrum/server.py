@@ -33,7 +33,6 @@ from aiorpcx import (
 )
 
 from . import merkle
-from .merkle import sha256
 
 BAD_REQUEST = 1
 DAEMON_ERROR = 2
@@ -390,7 +389,7 @@ class ElectrumSession(SessionBase):
             f"{hash_to_hex_str(tx_hash)}:{height:d}:" for tx_hash, height in db_history
         )
 
-        return sha256(status.encode()).hex() if status else None
+        return merkle.sha256(status.encode()).hex() if status else None
 
     async def hashX_subscribe(self, hashX, alias):
         await self.session_mgr.subscribe(hashX)
