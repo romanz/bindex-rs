@@ -595,7 +595,7 @@ async def sync_task(mgr: Manager, indexer: Indexer):
             data = [[i] for i, _ in items]
             update_scripthashes(mgr.db.cursor(), data)
 
-            # update history index for the new scripthashesfinish
+            # update history index for the new scripthashes
             chain_updated = await indexer.sync()
             if items or chain_updated:
                 LOG.info("indexer at block=%r: %d reqs", indexer.tip, len(items))
