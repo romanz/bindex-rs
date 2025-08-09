@@ -190,7 +190,7 @@ impl Index {
         &self,
         script_hash: &index::ScriptHash,
         from: index::TxNum,
-    ) -> Result<impl Iterator<Item = Location>, Error> {
+    ) -> Result<impl Iterator<Item = Location<'_>>, Error> {
         Ok(self
             .store
             .scan(script_hash, from)?

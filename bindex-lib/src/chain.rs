@@ -64,7 +64,7 @@ impl Chain {
         }
     }
 
-    pub fn find_by_txnum(&self, txnum: &index::TxNum) -> Option<Location> {
+    pub fn find_by_txnum(&self, txnum: &index::TxNum) -> Option<Location<'_>> {
         let height = match self
             .rows
             .binary_search_by_key(txnum, index::Header::next_txnum)
