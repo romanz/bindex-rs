@@ -487,6 +487,7 @@ class SessionBase(RPCSession):
     """
 
     log_me = False
+    initial_concurrent = 100
 
     session_counter = itertools.count()
 
