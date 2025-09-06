@@ -60,10 +60,9 @@ PORT = int(os.environ.get("ELECTRUM_PORT", 50001))
 ZMQ_ADDR = os.environ.get("ZMQ_ADDR")
 
 BITCOIND_URL = os.environ.get("BITCOIND_URL", "http://localhost:8332")
-
-BITCOIND_COOKIE_PATH = os.environ.get("BITCOIND_COOKIE_PATH", "~/.bitcoin/.cookie")
-BITCOIND_COOKIE = Path(BITCOIND_COOKIE_PATH).expanduser().read_bytes()
-AUTH_HEADER = f"Basic {base64.b64encode(BITCOIND_COOKIE).decode()}"
+BITCOIND_COOKIE_PATH = Path(
+    os.environ.get("BITCOIND_COOKIE_PATH", "~/.bitcoin/.cookie")
+).expanduser()
 
 
 class DummySession:
@@ -80,27 +79,50 @@ class DummySession:
 async def rest_get(path, f, ignore=(), session=None):
     ctx = aiohttp.ClientSession() if session is None else DummySession(session)
     async with ctx as session:
-        async with session.get(f"{BITCOIND_URL}/rest/{path}") as response:
-            if response.status in ignore:
-                return None
-            response.raise_for_status()
-            return await f(response)
+        for _ in range(60):
+            try:
+                async with session.get(f"{BITCOIND_URL}/rest/{path}") as response:
+                    if response.status in ignore:
+                        return None
+                    if response.status == 503:
+                        LOG.warning("bitcoind is unavailable: %s", response)
+                        time.sleep(1)
+                        continue
+                    response.raise_for_status()
+                    return await f(response)
+            except aiohttp.client_exceptions.ClientError as e:
+                LOG.warning("%s", e)
+                time.sleep(1)
+                continue
 
 
 async def json_rpc(method, *params):
-    async with aiohttp.ClientSession() as session:
-        headers = {
-            "Authorization": AUTH_HEADER,
-        }
-        data = json.dumps(
-            {"method": method, "params": params, "id": 0, "jsonrpc": "2.0"}
-        )
-        async with session.post(BITCOIND_URL, headers=headers, data=data) as response:
+    for _ in range(60):
+        async with aiohttp.ClientSession() as session:
+            if not BITCOIND_COOKIE_PATH.exists():
+                LOG.warning("%s is missing", BITCOIND_COOKIE_PATH)
+                continue
+
+            headers = {
+                "Authorization": f"Basic {base64.b64encode(BITCOIND_COOKIE_PATH.read_bytes()).decode()}",
+            }
+            data = json.dumps(
+                {"method": method, "params": params, "id": 0, "jsonrpc": "2.0"}
+            )
+            async with session.post(
+                BITCOIND_URL, headers=headers, data=data
+            ) as response:
+                if response.status == 503:
+                    LOG.warning("bitcoind is unavailable: %s", response)
+                    time.sleep(1)
+                    continue
+                response.raise_for_status()
+                json_obj = await response.json()
+                if err := json_obj.get("error"):
+                    raise RPCError(DAEMON_ERROR, err)
+                return json_obj["result"]
+
             response.raise_for_status()
-            json_obj = await response.json()
-            if err := json_obj.get("error"):
-                raise RPCError(DAEMON_ERROR, err)
-            return json_obj["result"]
 
 
 LOG = logging.getLogger()
