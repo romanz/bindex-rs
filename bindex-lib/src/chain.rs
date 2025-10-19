@@ -85,6 +85,7 @@ impl Chain {
         );
         let offset = txnum.offset_from(prev_pos).unwrap();
         Some(Location {
+            txnum: *txnum,
             height,
             offset,
             indexed_header,
@@ -94,13 +95,14 @@ impl Chain {
 
 #[derive(PartialEq, Eq, PartialOrd, Clone, Copy)]
 pub struct Location<'a> {
-    pub height: usize, // block height
-    pub offset: u64,   // tx position within its block
+    pub txnum: index::TxNum, // tx number (position within the chain)
+    pub height: usize,       // block height
+    pub offset: u64,         // tx position within its block
     pub indexed_header: &'a index::Header,
 }
 
 impl Ord for Location<'_> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (self.height, self.offset).cmp(&(other.height, other.offset))
+        self.txnum.cmp(&other.txnum)
     }
 }

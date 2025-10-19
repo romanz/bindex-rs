@@ -1,6 +1,10 @@
 use std::ops::ControlFlow;
 
-use bitcoin::{consensus::Encodable, hashes::Hash, BlockHash};
+use bitcoin::{
+    consensus::{Decodable, Encodable},
+    hashes::Hash,
+    BlockHash,
+};
 use bitcoin_slices::{bsl, Parse, Visit};
 
 use crate::chain::Chain;
@@ -53,6 +57,14 @@ impl TxNum {
     pub fn offset_from(&self, base: TxNum) -> Option<u64> {
         self.0.checked_sub(base.0)
     }
+
+    pub fn serialize(&self) -> [u8; Self::LEN] {
+        self.0.to_be_bytes()
+    }
+
+    pub fn deserialize(bytes: [u8; Self::LEN]) -> Self {
+        Self(u64::from_be_bytes(bytes))
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
@@ -66,7 +78,7 @@ impl HashPrefixRow {
     pub fn new(prefix: HashPrefix, txnum: TxNum) -> Self {
         let mut result = [0u8; HashPrefix::LEN + TxNum::LEN];
         result[..HashPrefix::LEN].copy_from_slice(&prefix.0);
-        result[HashPrefix::LEN..].copy_from_slice(&txnum.0.to_be_bytes());
+        result[HashPrefix::LEN..].copy_from_slice(&txnum.serialize());
         Self { key: result }
     }
 
@@ -79,10 +91,14 @@ impl HashPrefixRow {
     }
 
     pub fn txnum(&self) -> TxNum {
-        TxNum(u64::from_be_bytes(
-            self.key[HashPrefix::LEN..].try_into().unwrap(),
-        ))
+        TxNum::deserialize(self.key[HashPrefix::LEN..].try_into().unwrap())
     }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
+pub struct TxPos {
+    pub offset: u32,
+    pub size: u32,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -182,6 +198,159 @@ fn add_spent_rows(
     Ok(visitor.txnum)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct TxPosVisitor<'a> {
+    result: &'a mut Vec<(TxNum, TxPos)>,
+    tx_num: TxNum,
+    tx_offset: u32,
+}
+
+impl<'a> TxPosVisitor<'a> {
+    fn new(result: &'a mut Vec<(TxNum, TxPos)>, tx_num: TxNum) -> Self {
+        Self {
+            result,
+            tx_num,
+            tx_offset: BLOCK_HEADER_LEN as u32,
+        }
+    }
+}
+
+impl bitcoin_slices::Visitor for TxPosVisitor<'_> {
+    fn visit_block_begin(&mut self, n: usize) {
+        self.tx_offset += bitcoin::VarInt(n as u64).size() as u32;
+    }
+
+    fn visit_transaction(&mut self, tx: &bsl::Transaction) -> ControlFlow<()> {
+        // Updated after all txouts are scanned
+        let tx_size = tx.as_ref().len() as u32;
+        let tx_pos = TxPos {
+            offset: self.tx_offset,
+            size: tx_size,
+        };
+        self.result.push((self.tx_num, tx_pos));
+        self.tx_num.0 += 1;
+        self.tx_offset += tx_size;
+        ControlFlow::Continue(())
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Offsets(Vec<u32>);
+
+impl Offsets {
+    fn get_tx_pos(&self, i: usize) -> TxPos {
+        let begin = self.0[i];
+        let end = self.0[i + 1];
+        TxPos {
+            offset: begin,
+            size: end - begin,
+        }
+    }
+}
+
+impl Encodable for Offsets {
+    fn consensus_encode<W: bitcoin::io::Write + ?Sized>(
+        &self,
+        w: &mut W,
+    ) -> Result<usize, bitcoin::io::Error> {
+        let mut len = 0;
+        len += bitcoin::VarInt(self.0.len() as u64).consensus_encode(w)?;
+        for offset in self.0.iter() {
+            len += offset.consensus_encode(w)?;
+        }
+        Ok(len)
+    }
+}
+
+impl Decodable for Offsets {
+    #[inline]
+    fn consensus_decode_from_finite_reader<R: bitcoin::io::Read + ?Sized>(
+        r: &mut R,
+    ) -> Result<Self, bitcoin::consensus::encode::Error> {
+        let len = bitcoin::VarInt::consensus_decode_from_finite_reader(r)?.0;
+        let mut ret = Vec::with_capacity(core::cmp::min(len as usize, TxPosRow::CHUNK_SIZE));
+        for _ in 0..len {
+            ret.push(Decodable::consensus_decode_from_finite_reader(r)?);
+        }
+        Ok(Offsets(ret))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TxPosRow {
+    last_txnum: TxNum,
+    offsets: Offsets,
+}
+
+impl TxPosRow {
+    fn new(last_txnum: TxNum, offsets: Vec<u32>) -> Self {
+        Self {
+            last_txnum,
+            offsets: Offsets(offsets),
+        }
+    }
+
+    const CHUNK_SIZE: usize = 64;
+
+    fn split(rows: &[(TxNum, TxPos)]) -> Vec<TxPosRow> {
+        for pair in rows.windows(2) {
+            let prev = pair[0];
+            let next = pair[1];
+            assert_eq!(next.0.offset_from(prev.0), Some(1));
+            assert_eq!(prev.1.offset + prev.1.size, next.1.offset);
+        }
+        rows.chunks(Self::CHUNK_SIZE)
+            .map(|chunk| {
+                let (last_txnum, last_txpos) = *chunk.last().expect("empty chunk");
+                let mut offsets = Vec::with_capacity(chunk.len() + 1);
+                offsets.extend(chunk.iter().map(|(_, txpos)| txpos.offset));
+                offsets.push(last_txpos.offset + last_txpos.size);
+                TxPosRow::new(last_txnum, offsets)
+            })
+            .collect()
+    }
+
+    pub fn get_tx_pos(&self, txnum: TxNum) -> TxPos {
+        let last_index = self.offsets.0.len().checked_sub(1).expect("empty Offsets");
+        let delta_from_last = self.last_txnum.offset_from(txnum).expect("TxNum too large") as usize;
+        self.offsets.get_tx_pos(
+            last_index
+                .checked_sub(delta_from_last + 1)
+                .expect("TxNum too small"),
+        )
+    }
+
+    pub fn serialize(&self) -> ([u8; TxNum::LEN], Vec<u8>) {
+        let key = self.last_txnum.serialize();
+        let value = bitcoin::consensus::serialize(&self.offsets);
+        (key, value)
+    }
+
+    pub fn deserialize(key: &[u8], value: &[u8]) -> Self {
+        Self {
+            last_txnum: TxNum::deserialize(key.try_into().expect("invalid TxNum")),
+            offsets: Offsets::consensus_decode_from_finite_reader(&mut &value[..])
+                .expect("invalid Offsets"),
+        }
+    }
+}
+
+fn add_txpos_rows(
+    block: &BlockBytes,
+    tx_num: TxNum,
+    txpos_rows: &mut Vec<TxPosRow>,
+) -> Result<TxNum, Error> {
+    let mut rows = vec![];
+    let mut visitor = TxPosVisitor::new(&mut rows, tx_num);
+    let res = bsl::Block::visit(&block.0, &mut visitor).map_err(Error::Parse)?;
+    if !res.remaining().is_empty() {
+        return Err(Error::Leftover(res.remaining().len()));
+    }
+    let next_txnum = visitor.tx_num;
+    *txpos_rows = TxPosRow::split(&rows);
+    Ok(next_txnum)
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct Header {
     next_txnum: TxNum,
@@ -204,7 +373,7 @@ impl Header {
     }
 
     pub fn serialize(&self) -> SerializedHeaderRow {
-        let key = self.next_txnum.0.to_be_bytes();
+        let key = self.next_txnum.serialize();
         let mut value = [0u8; BLOCK_HASH_LEN + BLOCK_HEADER_LEN];
         value[..BLOCK_HASH_LEN].copy_from_slice(self.hash.as_byte_array());
         self.header
@@ -264,6 +433,7 @@ impl SpentBytes {
 
 pub struct Batch {
     pub script_hash_rows: Vec<HashPrefixRow>,
+    pub txpos_rows: Vec<TxPosRow>,
     pub header: Header,
 }
 
@@ -275,10 +445,13 @@ impl Batch {
         spent: &SpentBytes,
     ) -> Result<Self, Error> {
         let mut script_hash_rows = vec![];
+        let mut txpos_rows = vec![];
         let txnum = {
             let num1 = add_block_rows(block, txnum, &mut script_hash_rows)?;
             let num2 = add_spent_rows(spent, txnum, &mut script_hash_rows)?;
             assert_eq!(num1, num2); // both must have the same number of transactions
+            let num3 = add_txpos_rows(block, txnum, &mut txpos_rows)?;
+            assert_eq!(num1, num3); // both must have the same number of transactions
             num1
         };
         let header = Header::new(
@@ -288,6 +461,7 @@ impl Batch {
         );
         Ok(Batch {
             script_hash_rows,
+            txpos_rows,
             header,
         })
     }
@@ -450,5 +624,60 @@ mod tests {
         assert_eq!(txnum.binary_search(&39), Err(3));
         assert_eq!(txnum.binary_search(&40), Ok(3));
         assert_eq!(txnum.binary_search(&41), Err(4));
+    }
+
+    #[test]
+    fn test_serde_txposrow() {
+        let row = TxPosRow::new(TxNum(2), vec![0, 1, 3, 6]);
+        assert_eq!(row.get_tx_pos(TxNum(0)), TxPos { offset: 0, size: 1 });
+        assert_eq!(row.get_tx_pos(TxNum(1)), TxPos { offset: 1, size: 2 });
+        assert_eq!(row.get_tx_pos(TxNum(2)), TxPos { offset: 3, size: 3 });
+        let (key, value) = row.serialize();
+        assert_eq!(TxPosRow::deserialize(&key, &value), row);
+    }
+
+    #[test]
+    fn test_get_txpos() {
+        let rows = TxPosRow::split(
+            &(0..1000u16)
+                .map(|i| {
+                    (
+                        TxNum(i.into()),
+                        TxPos {
+                            offset: u32::from(i) * 10,
+                            size: 10,
+                        },
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(
+            rows[0].get_tx_pos(TxNum(50)),
+            TxPos {
+                offset: 500,
+                size: 10
+            }
+        );
+        assert_eq!(
+            rows[1].get_tx_pos(TxNum(100)),
+            TxPos {
+                offset: 1000,
+                size: 10
+            }
+        );
+        assert_eq!(
+            rows[1].get_tx_pos(TxNum(127)),
+            TxPos {
+                offset: 1270,
+                size: 10
+            }
+        );
+        assert_eq!(
+            rows[2].get_tx_pos(TxNum(128)),
+            TxPos {
+                offset: 1280,
+                size: 10
+            }
+        );
     }
 }

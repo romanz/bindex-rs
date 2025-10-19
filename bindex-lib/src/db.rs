@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::index;
+use crate::index::{self, TxPosRow};
 
 use log::*;
 
@@ -31,8 +31,9 @@ fn default_opts() -> rocksdb::Options {
 
 const HEADERS_CF: &str = "headers";
 const SCRIPT_HASH_CF: &str = "script_hash";
+const TXPOS_CF: &str = "txpos";
 
-const COLUMN_FAMILIES: &[&str] = &[HEADERS_CF, SCRIPT_HASH_CF];
+const COLUMN_FAMILIES: &[&str] = &[HEADERS_CF, TXPOS_CF, SCRIPT_HASH_CF];
 
 fn cf_descriptors(
     opts: &rocksdb::Options,
@@ -75,6 +76,7 @@ impl Store {
             return Ok(());
         }
         let mut write_batch = rocksdb::WriteBatch::default();
+
         let cf = self.cf(SCRIPT_HASH_CF);
         let mut script_hash_rows = vec![];
         for batch in batches {
@@ -84,6 +86,13 @@ impl Store {
         for row in script_hash_rows {
             write_batch.put_cf(cf, row, b"");
         }
+
+        let cf = self.cf(TXPOS_CF);
+        batches
+            .iter()
+            .flat_map(|batch| batch.txpos_rows.iter())
+            .map(index::TxPosRow::serialize)
+            .for_each(|(k, v)| write_batch.put_cf(cf, k, v));
 
         let cf = self.cf(HEADERS_CF);
         for batch in batches {
@@ -109,6 +118,13 @@ impl Store {
         for row in script_hash_rows {
             write_batch.delete_cf(cf, row);
         }
+
+        let cf = self.cf(TXPOS_CF);
+        batches
+            .iter()
+            .flat_map(|batch| batch.txpos_rows.iter())
+            .map(index::TxPosRow::serialize)
+            .for_each(|(k, _v)| write_batch.delete_cf(cf, k));
 
         let cf = self.cf(HEADERS_CF);
         // index::Header key is next_txnum, so it is safe to delete
@@ -144,7 +160,7 @@ impl Store {
         Ok(())
     }
 
-    pub fn scan(
+    pub fn scan_by_script_hash(
         &self,
         script_hash: &index::ScriptHash,
         from: index::TxNum,
@@ -165,6 +181,20 @@ impl Store {
             positions.push(row.txnum());
         }
         Ok(positions.into_iter())
+    }
+
+    pub fn get_tx_pos(&self, txnum: index::TxNum) -> Result<index::TxPos, rocksdb::Error> {
+        let cf = self.cf(TXPOS_CF);
+
+        let from_key = txnum.serialize();
+        let mode = rocksdb::IteratorMode::From(&from_key, rocksdb::Direction::Forward);
+        if let Some(kv) = self.db.iterator_cf(cf, mode).next() {
+            let (key, value) = kv?;
+            assert!(from_key[..] <= key[..]);
+            let row = TxPosRow::deserialize(&key, &value);
+            return Ok(row.get_tx_pos(txnum));
+        }
+        panic!("Missing {:?}", txnum)
     }
 
     pub fn headers(&self) -> Result<Vec<index::Header>, rocksdb::Error> {

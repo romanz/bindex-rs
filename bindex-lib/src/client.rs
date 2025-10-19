@@ -95,8 +95,16 @@ impl Client {
         Ok(index::SpentBytes::new(data))
     }
 
-    pub fn get_tx_bytes_from_block(&self, hash: BlockHash, offset: u64) -> Result<Vec<u8>, Error> {
-        let url = format!("{}/rest/txfromblock/{}-{}.bin", self.url, hash, offset);
+    pub fn get_tx_bytes_from_block(
+        &self,
+        hash: BlockHash,
+        offset: u32,
+        size: u32,
+    ) -> Result<Vec<u8>, Error> {
+        let url = format!(
+            "{}/rest/blockpart/{}.bin?offset={}&size={}",
+            self.url, hash, offset, size
+        );
         self.get_bytes(&url)
     }
 }

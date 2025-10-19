@@ -7,10 +7,9 @@ See [slides](https://docs.google.com/presentation/d/1Zez-6DApKRu59kke4i_g9jwxQla
 
 ## Requirements
 
-Currently, building an address index and querying it requires the following Bitcoin Core PRs:
+Currently, querying it requires Bitcoin Core 30 with the following PR:
 
-- https://github.com/bitcoin/bitcoin/pull/32540
-- https://github.com/bitcoin/bitcoin/pull/32541
+- https://github.com/bitcoin/bitcoin/pull/33657
 
 ## Usage
 

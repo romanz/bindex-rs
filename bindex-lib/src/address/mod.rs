@@ -71,7 +71,7 @@ impl Index {
             Err(client::Error::Http(ureq::Error::StatusCode(404))) => Err(Error::NotSupported)?,
             res => res?,
         };
-        match client.get_tx_bytes_from_block(genesis_hash, 0) {
+        match client.get_tx_bytes_from_block(genesis_hash, 0, 1) {
             Err(client::Error::Http(ureq::Error::StatusCode(404))) => Err(Error::NotSupported)?,
             res => res?,
         };
@@ -83,9 +83,10 @@ impl Index {
                 return Err(Error::ChainMismatch(indexed_genesis.hash(), genesis_hash));
             }
             info!(
-                "block={} height={} headers loaded",
+                "block={} height={} headers loaded {:?}",
                 chain.tip_hash().unwrap(),
-                chain.tip_height().unwrap()
+                chain.tip_height().unwrap(),
+                chain.next_txnum(),
             );
         }
         Ok(Index {
@@ -193,15 +194,18 @@ impl Index {
     ) -> Result<impl Iterator<Item = Location<'_>>, Error> {
         Ok(self
             .store
-            .scan(script_hash, from)?
+            .scan_by_script_hash(script_hash, from)?
             // chain and store must be in sync
             .map(|txnum| self.chain.find_by_txnum(&txnum).expect("invalid position")))
     }
 
     fn get_tx_bytes(&self, location: &Location) -> Result<Vec<u8>, Error> {
-        Ok(self
-            .client
-            .get_tx_bytes_from_block(location.indexed_header.hash(), location.offset)?)
+        let pos = self.store.get_tx_pos(location.txnum)?;
+        Ok(self.client.get_tx_bytes_from_block(
+            location.indexed_header.hash(),
+            pos.offset,
+            pos.size,
+        )?)
     }
 
     fn chain(&self) -> &Chain {
