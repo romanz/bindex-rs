@@ -252,9 +252,27 @@ impl Encodable for Offsets {
         w: &mut W,
     ) -> Result<usize, bitcoin::io::Error> {
         let mut len = 0;
-        len += bitcoin::VarInt(self.0.len() as u64).consensus_encode(w)?;
-        for offset in self.0.iter() {
-            len += offset.consensus_encode(w)?;
+
+        // only small chunks of offsets are supported (<=256)
+        let sizes_count: u8 = self
+            .0
+            .len()
+            .checked_sub(1)
+            .expect("no transactions")
+            .try_into()
+            .expect("too many offsets");
+        len += sizes_count.consensus_encode(w)?;
+
+        let iter_sizes = || self.0.windows(2).map(|pair| pair[1] - pair[0]);
+
+        let min_tx_size = iter_sizes().min().expect("no transactions");
+        len += bitcoin::VarInt(min_tx_size.into()).consensus_encode(w)?;
+        len += bitcoin::VarInt(self.0.first().copied().expect("no offsets").into())
+            .consensus_encode(w)?;
+
+        for tx_size in iter_sizes() {
+            let delta_from_min = tx_size - min_tx_size;
+            len += bitcoin::VarInt(delta_from_min.into()).consensus_encode(w)?;
         }
         Ok(len)
     }
@@ -265,12 +283,29 @@ impl Decodable for Offsets {
     fn consensus_decode_from_finite_reader<R: bitcoin::io::Read + ?Sized>(
         r: &mut R,
     ) -> Result<Self, bitcoin::consensus::encode::Error> {
-        let len = bitcoin::VarInt::consensus_decode_from_finite_reader(r)?.0;
-        let mut ret = Vec::with_capacity(core::cmp::min(len as usize, TxPosRow::CHUNK_SIZE));
-        for _ in 0..len {
-            ret.push(Decodable::consensus_decode_from_finite_reader(r)?);
+        let sizes_count = u8::consensus_decode_from_finite_reader(r)?;
+        let mut offsets = Vec::with_capacity(usize::from(sizes_count) + 1);
+
+        let min_tx_size: u32 = bitcoin::VarInt::consensus_decode_from_finite_reader(r)?
+            .0
+            .try_into()
+            .expect("too large min_tx_size");
+
+        let mut offset: u32 = bitcoin::VarInt::consensus_decode_from_finite_reader(r)?
+            .0
+            .try_into()
+            .expect("too large first offset");
+
+        offsets.push(offset);
+        for _ in 0..sizes_count {
+            let delta_from_min: u32 = bitcoin::VarInt::consensus_decode_from_finite_reader(r)?
+                .0
+                .try_into()
+                .expect("too large delta_from_min");
+            offset += min_tx_size + delta_from_min;
+            offsets.push(offset);
         }
-        Ok(Offsets(ret))
+        Ok(Offsets(offsets))
     }
 }
 
