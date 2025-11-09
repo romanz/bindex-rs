@@ -196,7 +196,7 @@ impl Index {
             .store
             .scan_by_script_hash(script_hash, from)?
             // chain and store must be in sync
-            .map(|txnum| self.chain.find_by_txnum(&txnum).expect("invalid position")))
+            .map(|txnum| self.chain.find_by_txnum(txnum).expect("invalid position")))
     }
 
     fn get_tx_bytes(&self, location: &Location) -> Result<Vec<u8>, Error> {

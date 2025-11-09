@@ -64,10 +64,10 @@ impl Chain {
         }
     }
 
-    pub fn find_by_txnum(&self, txnum: &index::TxNum) -> Option<Location<'_>> {
+    pub fn find_by_txnum(&self, txnum: index::TxNum) -> Option<Location<'_>> {
         let height = match self
             .rows
-            .binary_search_by_key(txnum, index::Header::next_txnum)
+            .binary_search_by_key(&txnum, index::Header::next_txnum)
         {
             Ok(i) => i + 1, // hitting exactly a block boundary txnum -> next block
             Err(i) => i,
@@ -80,12 +80,12 @@ impl Chain {
             .map_or_else(index::TxNum::default, index::Header::next_txnum);
 
         assert!(
-            txnum >= &prev_pos,
+            txnum >= prev_pos,
             "binary search failed to find the correct position"
         );
         let offset = txnum.offset_from(prev_pos).unwrap();
         Some(Location {
-            txnum: *txnum,
+            txnum,
             height,
             offset,
             indexed_header,
