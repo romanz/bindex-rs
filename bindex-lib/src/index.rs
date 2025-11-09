@@ -627,10 +627,35 @@ mod tests {
 
     #[test]
     fn test_serde_txposrow() {
-        let row = TxPosRow::new(TxNum(2), vec![0, 1, 3, 6]);
-        assert_eq!(row.get_tx_pos(TxNum(0)), TxPos { offset: 0, size: 1 });
-        assert_eq!(row.get_tx_pos(TxNum(1)), TxPos { offset: 1, size: 2 });
-        assert_eq!(row.get_tx_pos(TxNum(2)), TxPos { offset: 3, size: 3 });
+        let row = TxPosRow::new(TxNum(103), vec![10, 11, 13, 16, 20]);
+        assert_eq!(
+            row.get_tx_pos(TxNum(100)),
+            TxPos {
+                offset: 10,
+                size: 1
+            }
+        );
+        assert_eq!(
+            row.get_tx_pos(TxNum(101)),
+            TxPos {
+                offset: 11,
+                size: 2
+            }
+        );
+        assert_eq!(
+            row.get_tx_pos(TxNum(102)),
+            TxPos {
+                offset: 13,
+                size: 3
+            }
+        );
+        assert_eq!(
+            row.get_tx_pos(TxNum(103)),
+            TxPos {
+                offset: 16,
+                size: 4
+            }
+        );
         let (key, value) = row.serialize();
         assert_eq!(TxPosRow::deserialize(&key, &value), row);
     }
