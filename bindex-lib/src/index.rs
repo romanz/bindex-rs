@@ -101,7 +101,6 @@ pub struct TxPos {
     pub size: u32,
 }
 
-#[derive(Debug, PartialEq, Eq)]
 struct IndexVisitor<'a> {
     rows: &'a mut Vec<HashPrefixRow>,
     txnum: TxNum,
@@ -198,7 +197,6 @@ fn add_spent_rows(
     Ok(visitor.txnum)
 }
 
-#[derive(Debug, PartialEq, Eq)]
 struct TxPosVisitor<'a> {
     positions: &'a mut Vec<(TxNum, TxPos)>,
     tx_num: TxNum,
