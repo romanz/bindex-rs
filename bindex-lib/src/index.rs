@@ -200,15 +200,15 @@ fn add_spent_rows(
 
 #[derive(Debug, PartialEq, Eq)]
 struct TxPosVisitor<'a> {
-    result: &'a mut Vec<(TxNum, TxPos)>,
+    positions: &'a mut Vec<(TxNum, TxPos)>,
     tx_num: TxNum,
     tx_offset: u32,
 }
 
 impl<'a> TxPosVisitor<'a> {
-    fn new(result: &'a mut Vec<(TxNum, TxPos)>, tx_num: TxNum) -> Self {
+    fn new(positions: &'a mut Vec<(TxNum, TxPos)>, tx_num: TxNum) -> Self {
         Self {
-            result,
+            positions,
             tx_num,
             tx_offset: BLOCK_HEADER_LEN as u32,
         }
@@ -227,7 +227,7 @@ impl bitcoin_slices::Visitor for TxPosVisitor<'_> {
             offset: self.tx_offset,
             size: tx_size,
         };
-        self.result.push((self.tx_num, tx_pos));
+        self.positions.push((self.tx_num, tx_pos));
         self.tx_num.0 += 1;
         self.tx_offset += tx_size;
         ControlFlow::Continue(())
@@ -292,14 +292,15 @@ impl TxPosRow {
 
     const CHUNK_SIZE: usize = 64;
 
-    fn split(rows: &[(TxNum, TxPos)]) -> Vec<TxPosRow> {
-        for pair in rows.windows(2) {
+    fn group(positions: &[(TxNum, TxPos)]) -> Vec<TxPosRow> {
+        for pair in positions.windows(2) {
             let prev = pair[0];
             let next = pair[1];
             assert_eq!(next.0.offset_from(prev.0), Some(1));
             assert_eq!(prev.1.offset + prev.1.size, next.1.offset);
         }
-        rows.chunks(Self::CHUNK_SIZE)
+        positions
+            .chunks(Self::CHUNK_SIZE)
             .map(|chunk| {
                 let (last_txnum, last_txpos) = *chunk.last().expect("empty chunk");
                 let mut offsets = Vec::with_capacity(chunk.len() + 1);
@@ -340,14 +341,14 @@ fn add_txpos_rows(
     tx_num: TxNum,
     txpos_rows: &mut Vec<TxPosRow>,
 ) -> Result<TxNum, Error> {
-    let mut rows = vec![];
-    let mut visitor = TxPosVisitor::new(&mut rows, tx_num);
+    let mut positions = vec![];
+    let mut visitor = TxPosVisitor::new(&mut positions, tx_num);
     let res = bsl::Block::visit(&block.0, &mut visitor).map_err(Error::Parse)?;
     if !res.remaining().is_empty() {
         return Err(Error::Leftover(res.remaining().len()));
     }
     let next_txnum = visitor.tx_num;
-    *txpos_rows = TxPosRow::split(&rows);
+    *txpos_rows = TxPosRow::group(&positions);
     Ok(next_txnum)
 }
 
@@ -638,7 +639,7 @@ mod tests {
 
     #[test]
     fn test_get_txpos() {
-        let rows = TxPosRow::split(
+        let rows = TxPosRow::group(
             &(0..1000u16)
                 .map(|i| {
                     (
