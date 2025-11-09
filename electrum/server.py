@@ -339,15 +339,9 @@ class ElectrumSession(SessionBase):
     @classmethod
     def server_features(cls, env):
         """Return the server features dictionary."""
-        hosts_dict = {}
-        for service in env.report_services:
-            port_dict = hosts_dict.setdefault(str(service.host), {})
-            if service.protocol not in port_dict:
-                port_dict[f"{service.protocol}_port"] = service.port
-
         min_str, max_str = cls.protocol_min_max_strings()
         return {
-            "hosts": hosts_dict,
+            "hosts": {},
             "pruning": None,
             "server_version": VERSION,
             "protocol_min": min_str,
