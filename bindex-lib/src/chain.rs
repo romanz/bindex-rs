@@ -74,16 +74,21 @@ impl Chain {
         };
 
         let indexed_header = self.rows.get(height)?;
-        let prev_pos = self
+        assert!(
+            txnum < indexed_header.next_txnum(),
+            "binary search failed to find the correct position"
+        );
+
+        let prev_txnum = self
             .rows
             .get(height - 1)
             .map_or_else(index::TxNum::default, index::Header::next_txnum);
 
         assert!(
-            txnum >= prev_pos,
+            txnum >= prev_txnum,
             "binary search failed to find the correct position"
         );
-        let offset = txnum.offset_from(prev_pos).unwrap();
+        let offset = txnum.offset_from(prev_txnum).unwrap();
         Some(Location {
             txnum,
             height,
