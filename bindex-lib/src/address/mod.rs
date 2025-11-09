@@ -97,9 +97,9 @@ impl Index {
         })
     }
 
-    pub fn open_default(network: cli::Network) -> Result<Self, Error> {
+    pub fn open_default(db_path: &str, network: cli::Network) -> Result<Self, Error> {
         let bitcoin_network: bitcoin::Network = network.into();
-        let default_db_path = format!("db/{bitcoin_network}");
+        let default_db_path = format!("{db_path}/{bitcoin_network}");
         let default_rpc_port = match network {
             cli::Network::Bitcoin => 8332,
             cli::Network::Testnet => 18332,

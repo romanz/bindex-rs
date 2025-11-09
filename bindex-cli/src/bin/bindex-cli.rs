@@ -158,6 +158,9 @@ fn print_history(mut entries: Vec<Entry>, history_limit: usize) {
 #[command(version, about, long_about = None)]
 /// Bitcoin address indexer
 struct Args {
+    #[arg(long = "db-path")]
+    db_path: String,
+
     #[arg(value_enum, short = 'n', long = "network", default_value_t = cli::Network::Bitcoin)]
     network: cli::Network,
 
@@ -262,7 +265,7 @@ fn run() -> Result<()> {
             .ok_or("Electrum requires setting a cache file")?;
         server = Some(Electrum::start(&cache_file)?);
     }
-    let mut index = address::Index::open_default(args.network)?;
+    let mut index = address::Index::open_default(&args.db_path, args.network)?;
     let mut tip = BlockHash::all_zeros();
     loop {
         while index.sync_chain(1000)?.indexed_blocks > 0 {}
