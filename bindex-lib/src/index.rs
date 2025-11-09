@@ -276,8 +276,8 @@ impl Decodable for Offsets {
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TxPosRow {
-    last_txnum: TxNum,
-    offsets: Offsets,
+    last_txnum: TxNum, // = maximal txnum in this row
+    offsets: Offsets,  // = N+1 offsets (for N transactions)
 }
 
 impl TxPosRow {
@@ -292,10 +292,10 @@ impl TxPosRow {
 
     fn group(positions: &[(TxNum, TxPos)]) -> Vec<TxPosRow> {
         for pair in positions.windows(2) {
-            let prev = pair[0];
-            let next = pair[1];
-            assert_eq!(next.0.offset_from(prev.0), Some(1));
-            assert_eq!(prev.1.offset + prev.1.size, next.1.offset);
+            let (prev_num, prev_pos) = pair[0];
+            let (next_num, next_pos) = pair[1];
+            assert_eq!(next_num.offset_from(prev_num), Some(1));
+            assert_eq!(prev_pos.offset + prev_pos.size, next_pos.offset);
         }
         positions
             .chunks(Self::CHUNK_SIZE)
@@ -303,8 +303,8 @@ impl TxPosRow {
                 let (last_txnum, last_txpos) = *chunk.last().expect("empty chunk");
                 let mut offsets = Vec::with_capacity(chunk.len() + 1);
                 offsets.extend(chunk.iter().map(|(_, txpos)| txpos.offset));
-                offsets.push(last_txpos.offset + last_txpos.size);
-                TxPosRow::new(last_txnum, offsets)
+                offsets.push(last_txpos.offset + last_txpos.size); //  last tx ending offset
+                TxPosRow::new(last_txnum, offsets) // last tx num (for query optimization)
             })
             .collect()
     }
