@@ -780,7 +780,7 @@ def update_scripthashes(c: sqlite3.Cursor, data: list[bytes]):
     # update bindex DB with the new scripthashes
     c.execute("BEGIN")
     try:
-        r = c.executemany("INSERT OR IGNORE INTO watch (script_hash) VALUES (?1)", data)
+        r = c.executemany("INSERT OR IGNORE INTO watch (script_hash) VALUES (?)", data)
         if r.rowcount:
             LOG.info("watching %d new addresses", r.rowcount)
         c.execute("COMMIT")
