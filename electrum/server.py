@@ -49,9 +49,11 @@ MAX_CHUNK_SIZE = 2016
 
 
 class Env:
-    max_recv = 10**7
-    max_send = 10**7
-    donation_address = None
+    def __init__(self, genesis_header):
+        self.genesis_hash = hash_to_hex_str(merkle.double_sha256(genesis_header))
+        self.max_recv = 10**7
+        self.max_send = 10**7
+        self.donation_address = None
 
 
 VERSION = os.environ.get("ELECTRUM_VERSION", "electrs/0.999")
@@ -566,9 +568,9 @@ class ElectrumSession(SessionBase):
     PROTOCOL_MIN = (1, 4)
     PROTOCOL_MAX = (1, 4, 3)
 
-    def __init__(self, *args, mgr: Manager, **kwargs):
+    def __init__(self, *args, env: Env, mgr: Manager, **kwargs):
         super().__init__(*args, **kwargs)
-        self.env = Env()
+        self.env = env
         self.session_mgr = mgr
         self.subscribe_headers: dict | None = None
         self.connection.max_response_size = self.env.max_send
@@ -598,6 +600,7 @@ class ElectrumSession(SessionBase):
             "server_version": VERSION,
             "protocol_min": min_str,
             "protocol_max": max_str,
+            "genesis_hash": env.genesis_hash,
             "hash_function": "sha256",
             "services": [],
         }
@@ -875,7 +878,8 @@ async def main():
 
     indexer = await Indexer.start()  # wait for initial sync
     mgr = Manager()
-    cls = functools.partial(ElectrumSession, mgr=mgr)
+    env = Env(await mgr.raw_header(0))
+    cls = functools.partial(ElectrumSession, env=env, mgr=mgr)
     await serve_rs(cls, host=HOST, port=PORT)
     async with TaskGroup() as g:
         await g.spawn(sync_task(mgr, indexer))
