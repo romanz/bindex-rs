@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 
+from asyncio.exceptions import TimeoutError
+from aiohttp.client_exceptions import ClientError
 from aiorpcx import TaskGroup
 from aiorpcx import (
     JSONRPCAutoDetect,
@@ -67,7 +69,7 @@ BITCOIND_COOKIE_PATH = Path(
 ).expanduser()
 
 
-class DummySession:
+class DummyContext:
     def __init__(self, session):
         self.session = session
 
@@ -78,27 +80,36 @@ class DummySession:
         pass
 
 
-async def rest_get(path, f, ignore=(), session=None):
-    ctx = aiohttp.ClientSession() if session is None else DummySession(session)
+class NotFound(Exception):
+    pass
+
+
+class UnavailableDaemon(Exception):
+    pass
+
+
+async def rest_get(path, f, session=None) -> dict:
+    ctx = aiohttp.ClientSession() if session is None else DummyContext(session)
     async with ctx as session:
         for _ in range(60):
             try:
                 async with session.get(f"{BITCOIND_URL}/rest/{path}") as response:
-                    if response.status in ignore:
-                        return None
                     if response.status == 503:
                         LOG.warning("bitcoind is unavailable: %s", response)
                         time.sleep(1)
                         continue
+                    if response.status == 404:
+                        raise NotFound(response.url)
                     response.raise_for_status()
                     return await f(response)
-            except aiohttp.client_exceptions.ClientError as e:
+            except ClientError as e:
                 LOG.warning("%s", e)
                 time.sleep(1)
                 continue
+        raise UnavailableDaemon()
 
 
-async def json_rpc(method, *params):
+async def json_rpc(method, *params) -> dict:
     for _ in range(60):
         async with aiohttp.ClientSession() as session:
             if not BITCOIND_COOKIE_PATH.exists():
@@ -125,25 +136,26 @@ async def json_rpc(method, *params):
                 return json_obj["result"]
 
             response.raise_for_status()
+    raise UnavailableDaemon()
 
 
 LOG = logging.getLogger()
 
 
-def try_get_tx(txid_hex: str, session=None) -> t.Awaitable[dict | None]:
+async def try_get_tx(txid_hex: str, session=None) -> dict | None:
     path = f"tx/{txid_hex}.json"
-    result = rest_get(path, lambda r: r.json(), ignore=(404,), session=session)
-    if result is None:
-        LOG.warning("'%s' not found", path)
-    return result
+    try:
+        return await rest_get(path, lambda r: r.json(), session=session)
+    except NotFound:
+        return None
 
 
-def try_get_utxo(txid_hex: str, vout: int, session=None) -> t.Awaitable[dict | None]:
+async def try_get_utxo(txid_hex: str, vout: int, session=None) -> dict | None:
     path = f"getutxos/{txid_hex}-{vout}.json"
-    result = rest_get(path, lambda r: r.json(), ignore=(404,), session=session)
-    if result is None:
-        LOG.warning("'%s' not found", path)
-    return result
+    try:
+        return await rest_get(path, lambda r: r.json(), session=session)
+    except NotFound:
+        return None
 
 
 class MissingPrevout(Exception):
@@ -153,7 +165,7 @@ class MissingPrevout(Exception):
 @dataclass
 class MempoolEntry:
     tx: dict
-    scripthashes: tuple[bytes]
+    scripthashes: set[bytes]  # input & output scripthashes
     fee: int  # in sats (may be inexact)
 
 
@@ -170,7 +182,7 @@ class Mempool:
         self.by_scripthash = {}  # hashX->[txids]
         self.next_seq = None
 
-    async def _get_entry(self, tx: dict, session=None) -> list[bytes]:
+    async def _get_entry(self, tx: dict, session=None) -> MempoolEntry:
         spks_hex = [txo["scriptPubKey"]["hex"] for txo in tx["vout"]]
         fee = -sum(txo["value"] for txo in tx["vout"])
 
@@ -182,7 +194,7 @@ class Mempool:
                 txo = entry.tx["vout"][prev_vout]
             else:
                 res = await try_get_utxo(prev_txid, prev_vout, session=session)
-                utxos = res["utxos"]
+                utxos = res and res["utxos"]
                 if not utxos:
                     # probably a new/stale block
                     raise MissingPrevout(prev_txid, prev_vout)
@@ -191,7 +203,7 @@ class Mempool:
             spks_hex.append(txo["scriptPubKey"]["hex"])
             fee += txo["value"]
 
-        scripthashes = tuple(
+        scripthashes = set(
             (sha256(bytes.fromhex(spk_hex)).digest() for spk_hex in spks_hex)
         )
         fee = round(fee * 1e8)  # good enough for fee estimation
@@ -518,13 +530,16 @@ class SessionBase(RPCSession):
     def __init__(
         self,
         transport,
+        env,
     ):
         connection = JSONRPCConnection(JSONRPCAutoDetect)
         super().__init__(transport, connection=connection)
+        self.env = env
         self.txs_sent = 0
         self.session_id = None
         self.session_id = next(self.session_counter)
         self.logger = logging.getLogger()
+        self.request_handlers = {}
 
     def default_framer(self):
         return NewlineFramer(max_size=self.env.max_recv)
@@ -568,9 +583,8 @@ class ElectrumSession(SessionBase):
     PROTOCOL_MIN = (1, 4)
     PROTOCOL_MAX = (1, 4, 3)
 
-    def __init__(self, *args, env: Env, mgr: Manager, **kwargs):
+    def __init__(self, *args, mgr: Manager, **kwargs):
         super().__init__(*args, **kwargs)
-        self.env = env
         self.session_mgr = mgr
         self.subscribe_headers: dict | None = None
         self.connection.max_response_size = self.env.max_send
@@ -761,7 +775,9 @@ class ElectrumSession(SessionBase):
         self.request_handlers = handlers
 
 
-async def get_items(q: asyncio.Queue, timeout=1.0):
+async def get_items(
+    q: asyncio.Queue, timeout=1.0
+) -> list[tuple[bytes, t.Callable[[], None]]]:
     items = []
     try:
         while True:
@@ -771,12 +787,12 @@ async def get_items(q: asyncio.Queue, timeout=1.0):
                 items.append(q.get_nowait())
             # use a shorter timeout for coalescing subsequent subscriptions
             timeout = 0.01
-    except asyncio.exceptions.TimeoutError:
+    except TimeoutError:
         pass
     return items
 
 
-def update_scripthashes(c: sqlite3.Cursor, data: list[bytes]):
+def update_scripthashes(c: sqlite3.Cursor, data: list[list[bytes]]):
     # update bindex DB with the new scripthashes
     c.execute("BEGIN")
     try:
@@ -809,7 +825,7 @@ class Indexer:
     async def _readline(self) -> str:
         return await self._loop.run_in_executor(None, sys.stdin.readline)
 
-    async def _write(self, data: bytes):
+    async def _write(self, data: str):
         def write_fn():
             sys.stdout.write(data)
             sys.stdout.flush()
@@ -875,6 +891,9 @@ async def main():
     blocks = info["blocks"]
     logging.info("Electrum server '%s' @ %s:%s", VERSION, HOST, PORT)
     logging.info("Bitcoin Core %s @ %s, %d blocks", chain, BITCOIND_URL, blocks)
+
+    info = await json_rpc("getblockchaininfo")
+    assert info["chain"] == chain
 
     indexer = await Indexer.start()  # wait for initial sync
     mgr = Manager()
