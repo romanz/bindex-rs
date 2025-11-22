@@ -88,12 +88,17 @@ class UnavailableDaemon(Exception):
     pass
 
 
-async def rest_get(path, f, session=None) -> dict:
-    ctx = aiohttp.ClientSession() if session is None else DummyContext(session)
-    async with ctx as session:
+LOG = logging.getLogger()
+
+
+class HttpClient:
+    def __init__(self, client_session: aiohttp.ClientSession):
+        self.session = client_session
+
+    async def rest_get(self, path, f) -> dict:
         for _ in range(60):
             try:
-                async with session.get(f"{BITCOIND_URL}/rest/{path}") as response:
+                async with self.session.get(f"{BITCOIND_URL}/rest/{path}") as response:
                     if response.status == 503:
                         LOG.warning("bitcoind is unavailable: %s", response)
                         time.sleep(1)
@@ -108,10 +113,8 @@ async def rest_get(path, f, session=None) -> dict:
                 continue
         raise UnavailableDaemon()
 
-
-async def json_rpc(method, *params) -> dict:
-    for _ in range(60):
-        async with aiohttp.ClientSession() as session:
+    async def json_rpc(self, method, *params) -> dict:
+        for _ in range(60):
             if not BITCOIND_COOKIE_PATH.exists():
                 LOG.warning("%s is missing", BITCOIND_COOKIE_PATH)
                 continue
@@ -122,7 +125,7 @@ async def json_rpc(method, *params) -> dict:
             data = json.dumps(
                 {"method": method, "params": params, "id": 0, "jsonrpc": "2.0"}
             )
-            async with session.post(
+            async with self.session.post(
                 BITCOIND_URL, headers=headers, data=data
             ) as response:
                 if response.status == 503:
@@ -136,26 +139,7 @@ async def json_rpc(method, *params) -> dict:
                 return json_obj["result"]
 
             response.raise_for_status()
-    raise UnavailableDaemon()
-
-
-LOG = logging.getLogger()
-
-
-async def try_get_tx(txid_hex: str, session=None) -> dict | None:
-    path = f"tx/{txid_hex}.json"
-    try:
-        return await rest_get(path, lambda r: r.json(), session=session)
-    except NotFound:
-        return None
-
-
-async def try_get_utxo(txid_hex: str, vout: int, session=None) -> dict | None:
-    path = f"getutxos/{txid_hex}-{vout}.json"
-    try:
-        return await rest_get(path, lambda r: r.json(), session=session)
-    except NotFound:
-        return None
+        raise UnavailableDaemon()
 
 
 class MissingPrevout(Exception):
@@ -176,13 +160,28 @@ class MempoolUpdate:
 
 
 class Mempool:
-    def __init__(self):
+    def __init__(self, http: HttpClient):
         self.notifications = asyncio.Queue()
         self.tx_entries = {}  # txid->MempoolEntry
         self.by_scripthash = {}  # hashX->[txids]
         self.next_seq = None
+        self.http = http
 
-    async def _get_entry(self, tx: dict, session=None) -> MempoolEntry:
+    async def try_get_tx(self, txid_hex: str) -> dict | None:
+        path = f"tx/{txid_hex}.json"
+        try:
+            return await self.http.rest_get(path, lambda r: r.json())
+        except NotFound:
+            return None
+
+    async def try_get_utxo(self, txid_hex: str, vout: int) -> dict | None:
+        path = f"getutxos/{txid_hex}-{vout}.json"
+        try:
+            return await self.http.rest_get(path, lambda r: r.json())
+        except NotFound:
+            return None
+
+    async def _get_entry(self, tx: dict) -> MempoolEntry:
         spks_hex = [txo["scriptPubKey"]["hex"] for txo in tx["vout"]]
         fee = -sum(txo["value"] for txo in tx["vout"])
 
@@ -193,7 +192,7 @@ class Mempool:
             if entry is not None:
                 txo = entry.tx["vout"][prev_vout]
             else:
-                res = await try_get_utxo(prev_txid, prev_vout, session=session)
+                res = await self.try_get_utxo(prev_txid, prev_vout)
                 utxos = res and res["utxos"]
                 if not utxos:
                     # probably a new/stale block
@@ -210,13 +209,13 @@ class Mempool:
         assert fee >= 0
         return MempoolEntry(tx, scripthashes, fee)
 
-    async def add(self, txid_hex: str, tx, session, scripthashes):
+    async def add(self, txid_hex: str, tx, scripthashes):
         assert txid_hex == tx["txid"]
         if txid_hex in self.tx_entries:
             LOG.warning("add: %s already exists", txid_hex)
             return
 
-        entry = await self._get_entry(tx, session=session)
+        entry = await self._get_entry(tx)
         scripthashes.update(entry.scripthashes)
         for scripthash in entry.scripthashes:
             self.by_scripthash.setdefault(scripthash, set()).add(txid_hex)
@@ -241,10 +240,9 @@ class Mempool:
 
     async def sync_all(self, session, scripthashes):
         t = time.time()
-        resp = await rest_get(
+        resp = await self.http.rest_get(
             "mempool/contents.json?mempool_sequence=true&verbose=false",
             lambda r: r.json(),
-            session=session,
         )
         new_txids = resp["txids"]
         new_txids_set = set(new_txids)
@@ -262,8 +260,8 @@ class Mempool:
                     "fetched %d mempool txs [%.1f%%]", i, 100.0 * i / len(new_txids)
                 )
                 next_report += 1
-            if tx := await try_get_tx(txid_hex, session):
-                await self.add(txid_hex, tx, session=session, scripthashes=scripthashes)
+            if tx := await self.try_get_tx(txid_hex):
+                await self.add(txid_hex, tx, scripthashes=scripthashes)
 
         self.next_seq = resp["mempool_sequence"]
         LOG.info(
@@ -300,11 +298,10 @@ class Mempool:
                     LOG.warning("skipped seq: %d > %d", mempool_seq, self.next_seq)
 
                 if event is Event.TX_ADD:
-                    if tx := await try_get_tx(hash_hex, session=session):
+                    if tx := await self.try_get_tx(hash_hex):
                         await self.add(
                             hash_hex,
                             tx,
-                            session=session,
                             scripthashes=result.scripthashes,
                         )
                 elif event is Event.TX_REMOVE:
@@ -327,12 +324,13 @@ class Mempool:
 
 
 class Manager:
-    def __init__(self):
+    def __init__(self, http: HttpClient):
         self.db = sqlite3.connect(CACHE_DB)
         self.merkle = merkle.Merkle()
         self.sync_queue = asyncio.Queue()
         self.notifications = asyncio.Queue()  # ZMQ notifications
-        self.mempool = Mempool()
+        self.mempool = Mempool(http)
+        self.http = http
         self.sessions: set[ElectrumSession] = set()
 
     async def notify_sessions(self):
@@ -349,7 +347,7 @@ class Manager:
         return {"hex": raw.hex(), "height": height}
 
     async def chaininfo(self):
-        return await rest_get("chaininfo.json", lambda r: r.json())
+        return await self.http.rest_get("chaininfo.json", lambda r: r.json())
 
     async def get_history(self, hashx: bytes) -> list[dict]:
         query = """
@@ -414,8 +412,10 @@ ORDER BY
         tx_hashes is an ordered list of binary hashes.  Raises RPCError.
         """
 
-        h = await rest_get(f"blockhashbyheight/{height}.hex", lambda r: r.text())
-        j = await rest_get(f"block/notxdetails/{h}.json", lambda r: r.json())
+        h = await self.http.rest_get(
+            f"blockhashbyheight/{height}.hex", lambda r: r.text()
+        )
+        j = await self.http.rest_get(f"block/notxdetails/{h}.json", lambda r: r.json())
         tx_hashes = [hex_str_to_hash(h) for h in j["tx"]]
         return tx_hashes
 
@@ -439,9 +439,13 @@ ORDER BY
     async def raw_headers(self, height: int, count: int):
         chunks = []
         while count > 0:
-            h = await rest_get(f"blockhashbyheight/{height}.hex", lambda r: r.text())
+            h = await self.http.rest_get(
+                f"blockhashbyheight/{height}.hex", lambda r: r.text()
+            )
             chunk_size = min(count, MAX_CHUNK_SIZE // 2)
-            chunk = await rest_get(f"headers/{chunk_size}/{h}.bin", lambda r: r.read())
+            chunk = await self.http.rest_get(
+                f"headers/{chunk_size}/{h}.bin", lambda r: r.read()
+            )
             assert len(chunk) % 80 == 0
             chunk_size = len(chunk) // 80
             assert chunk_size <= count
@@ -585,7 +589,7 @@ class ElectrumSession(SessionBase):
 
     def __init__(self, *args, mgr: Manager, **kwargs):
         super().__init__(*args, **kwargs)
-        self.session_mgr = mgr
+        self.manager = mgr
         self.subscribe_headers: dict | None = None
         self.connection.max_response_size = self.env.max_send
         self.hashX_subs = {}
@@ -593,12 +597,12 @@ class ElectrumSession(SessionBase):
         self.set_request_handlers()
         self.is_peer = False
         self.protocol_tuple = self.PROTOCOL_MIN
-        self.session_mgr.sessions.add(self)
+        self.manager.sessions.add(self)
 
     async def connection_lost(self):
         """Handle client disconnection."""
         await super().connection_lost()
-        self.session_mgr.sessions.remove(self)
+        self.manager.sessions.remove(self)
 
     @classmethod
     def protocol_min_max_strings(cls):
@@ -633,7 +637,7 @@ class ElectrumSession(SessionBase):
         return self.hashX_subs.pop(hashX, None)
 
     async def subscribe_headers_result(self) -> dict:
-        return await self.session_mgr.latest_header()
+        return await self.manager.latest_header()
 
     async def headers_subscribe(self):
         self.subscribe_headers = await self.subscribe_headers_result()
@@ -646,12 +650,12 @@ class ElectrumSession(SessionBase):
         return []
 
     async def address_status(self, hashX):
-        entries = await self.session_mgr.get_history(hashX)
+        entries = await self.manager.get_history(hashX)
         status = "".join(f"{e['tx_hash']}:{e['height']:d}:" for e in entries)
         return merkle.sha256(status.encode()).hex() if status else None
 
     async def hashX_subscribe(self, hashX, alias):
-        await self.session_mgr.subscribe(hashX)
+        await self.manager.subscribe(hashX)
 
         # Store the subscription only after address_status succeeds
         result = await self.address_status(hashX)
@@ -677,7 +681,7 @@ class ElectrumSession(SessionBase):
                 )
 
     async def confirmed_history(self, hashX):
-        return await self.session_mgr.get_history(hashX)
+        return await self.manager.get_history(hashX)
 
     async def scripthash_get_history(self, scripthash):
         hashX = scripthash_to_hashX(scripthash)
@@ -693,7 +697,7 @@ class ElectrumSession(SessionBase):
 
     async def block_header(self, height):
         height = non_negative_integer(height)
-        raw_header_hex = (await self.session_mgr.raw_header(height)).hex()
+        raw_header_hex = (await self.manager.raw_header(height)).hex()
         return raw_header_hex
 
     async def block_headers(self, start_height, count):
@@ -702,7 +706,7 @@ class ElectrumSession(SessionBase):
 
         max_size = MAX_CHUNK_SIZE
         count = min(count, max_size)
-        headers, count = await self.session_mgr.raw_headers(start_height, count)
+        headers, count = await self.manager.raw_headers(start_height, count)
         result = {"hex": headers.hex(), "count": count, "max": max_size}
         return result
 
@@ -729,20 +733,18 @@ class ElectrumSession(SessionBase):
         if verbose not in (True, False):
             raise RPCError(BAD_REQUEST, '"verbose" must be a boolean')
 
-        return await self.session_mgr.getrawtransaction(tx_hash, verbose)
+        return await self.manager.getrawtransaction(tx_hash, verbose)
 
     async def transaction_merkle(self, tx_hash, height):
         tx_hash = assert_tx_hash(tx_hash)
         height = non_negative_integer(height)
 
-        branch, tx_pos = await self.session_mgr.merkle_branch_for_tx_hash(
-            height, tx_hash
-        )
+        branch, tx_pos = await self.manager.merkle_branch_for_tx_hash(height, tx_hash)
         return {"block_height": height, "merkle": branch, "pos": tx_pos}
 
     async def transaction_broadcast(self, tx_hex):
         assert hex_to_bytes(tx_hex)
-        txid = await json_rpc("sendrawtransaction", tx_hex)
+        txid = await self.manager.http.json_rpc("sendrawtransaction", tx_hex)
         assert_tx_hash(txid)
         return txid
 
@@ -886,25 +888,28 @@ async def main():
     FMT = "[%(asctime)-27s %(levelname)-5s %(module)s] %(message)s"
     logging.basicConfig(level="INFO", format=FMT)
 
-    info = await rest_get("chaininfo.json", lambda r: r.json())
-    chain = info["chain"]
-    blocks = info["blocks"]
-    logging.info("Electrum server '%s' @ %s:%s", VERSION, HOST, PORT)
-    logging.info("Bitcoin Core %s @ %s, %d blocks", chain, BITCOIND_URL, blocks)
+    async with aiohttp.ClientSession() as session:
+        http = HttpClient(session)
 
-    info = await json_rpc("getblockchaininfo")
-    assert info["chain"] == chain
+        info = await http.rest_get("chaininfo.json", lambda r: r.json())
+        chain = info["chain"]
+        blocks = info["blocks"]
+        logging.info("Electrum server '%s' @ %s:%s", VERSION, HOST, PORT)
+        logging.info("Bitcoin Core %s @ %s, %d blocks", chain, BITCOIND_URL, blocks)
 
-    indexer = await Indexer.start()  # wait for initial sync
-    mgr = Manager()
-    env = Env(await mgr.raw_header(0))
-    cls = functools.partial(ElectrumSession, env=env, mgr=mgr)
-    await serve_rs(cls, host=HOST, port=PORT)
-    async with TaskGroup() as g:
-        await g.spawn(sync_task(mgr, indexer))
-        if ZMQ_ADDR:
-            await g.spawn(subscribe_events(ZMQ_ADDR, mgr.mempool.notify))
-        await g.join()
+        info = await http.json_rpc("getblockchaininfo")
+        assert info["chain"] == chain
+
+        indexer = await Indexer.start()  # wait for initial sync
+        mgr = Manager(http)
+        env = Env(await mgr.raw_header(0))
+        cls = functools.partial(ElectrumSession, env=env, mgr=mgr)
+        await serve_rs(cls, host=HOST, port=PORT)
+        async with TaskGroup() as g:
+            await g.spawn(sync_task(mgr, indexer))
+            if ZMQ_ADDR:
+                await g.spawn(subscribe_events(ZMQ_ADDR, mgr.mempool.notify))
+            await g.join()
 
 
 if __name__ == "__main__":
