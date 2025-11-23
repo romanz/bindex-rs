@@ -83,10 +83,9 @@ impl Index {
                 return Err(Error::ChainMismatch(indexed_genesis.hash(), genesis_hash));
             }
             info!(
-                "block={} height={} headers loaded {:?}",
+                "block={} height={} headers loaded",
                 chain.tip_hash().unwrap(),
                 chain.tip_height().unwrap(),
-                chain.next_txnum(),
             );
         }
         Ok(Index {
