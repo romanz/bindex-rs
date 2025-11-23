@@ -820,16 +820,22 @@ def get_scripthashes(c: sqlite3.Cursor) -> set[bytes]:
 
 
 class Indexer:
+    """Handle `bindex` connection."""
+
     def __init__(self):
         self.tip = None
         self._loop = asyncio.get_running_loop()
 
-    async def _readline(self) -> str:
-        return await self._loop.run_in_executor(None, sys.stdin.readline)
+    async def _read_tip(self) -> str:
+        """Wait for `bindex` to finish current indexing iteration, and return current chain tip hash."""
+        line = await self._loop.run_in_executor(None, sys.stdin.readline)
+        return line.strip()
 
-    async def _write(self, data: str):
+    async def _notify_bindex(self):
+        """Notify `bindex` to run another indexing iteration."""
+
         def write_fn():
-            sys.stdout.write(data)
+            sys.stdout.write("\n")
             sys.stdout.flush()
 
         await self._loop.run_in_executor(None, write_fn)
@@ -837,19 +843,14 @@ class Indexer:
     @classmethod
     async def start(cls) -> "Indexer":
         i = Indexer()
-        line = await i._readline()  # wait for an index sync
-        i.tip = line.strip()
+        i.tip = await i._read_tip()  # wait for initial index sync
         LOG.info("indexer at block=%r", i.tip)
         return i
 
     async def sync(self) -> bool:
-        # update history index for the new scripthashes
-        await self._write("\n")
-
-        # wait for the index sync to finish
-        line = await self._readline()
         prev_tip = self.tip
-        self.tip = line.strip()
+        await self._notify_bindex()  # update `bindex` (start an indexing iteration)
+        self.tip = await self._read_tip()  # wait for the above indexing iteration to finish
         LOG.debug("indexer at block=%r", self.tip)
         return prev_tip != self.tip
 
