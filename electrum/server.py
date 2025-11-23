@@ -19,6 +19,7 @@ import sqlite3
 import sys
 import time
 
+from collections import defaultdict
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -161,9 +162,9 @@ class MempoolUpdate:
 
 class Mempool:
     def __init__(self, http: HttpClient):
-        self.notifications = asyncio.Queue()
+        self.zmq_messages = asyncio.Queue()  # ZMQ message queue
         self.tx_entries = {}  # txid->MempoolEntry
-        self.by_scripthash = {}  # hashX->[txids]
+        self.by_scripthash: dict[bytes, set[str]] = {}  # hashX -> set[txid_hex]
         self.next_seq = None
         self.http = http
 
@@ -209,25 +210,30 @@ class Mempool:
         assert fee >= 0
         return MempoolEntry(tx, scripthashes, fee)
 
-    async def add(self, txid_hex: str, tx, scripthashes):
+    async def add_tx(self, txid_hex: str, tx, scripthashes: set[bytes]):
         assert txid_hex == tx["txid"]
         if txid_hex in self.tx_entries:
-            LOG.warning("add: %s already exists", txid_hex)
+            LOG.warning("add: tx %s already exists", txid_hex)
             return
 
         entry = await self._get_entry(tx)
+
+        # collect input and output scripthashes for the added tx
         scripthashes.update(entry.scripthashes)
+
         for scripthash in entry.scripthashes:
             self.by_scripthash.setdefault(scripthash, set()).add(txid_hex)
         self.tx_entries[txid_hex] = entry
 
-    def remove(self, txid_hex: str, scripthashes):
+    def remove_tx(self, txid_hex: str, scripthashes: set[bytes]):
         entry = self.tx_entries.pop(txid_hex, None)
         if entry is None:
-            LOG.warning("remove: %s not found", txid_hex)
+            LOG.warning("remove: tx %s not found", txid_hex)
             return
 
+        # collect input and output scripthashes for the removed tx
         scripthashes.update(entry.scripthashes)
+
         for scripthash in entry.scripthashes:
             txids = self.by_scripthash.get(scripthash)
             if txids is not None:
@@ -235,10 +241,10 @@ class Mempool:
                 if not txids:
                     self.by_scripthash.pop(scripthash)
 
-    def notify(self, *args):
-        self.notifications.put_nowait(args)
+    def enqueue_message(self, *args):
+        self.zmq_messages.put_nowait(args)
 
-    async def sync_all(self, session, scripthashes):
+    async def resync(self, scripthashes: set[bytes]):
         t = time.time()
         resp = await self.http.rest_get(
             "mempool/contents.json?mempool_sequence=true&verbose=false",
@@ -248,21 +254,29 @@ class Mempool:
         new_txids_set = set(new_txids)
         old_txids_set = set(self.tx_entries)
         for txid_hex in old_txids_set - new_txids_set:
-            self.remove(txid_hex, scripthashes=scripthashes)
+            # transaction is removed from mempool
+            self.remove_tx(txid_hex, scripthashes=scripthashes)
 
-        next_report = time.time() + 1
+        next_report = time.time() + 1  # at most once per second
         # iterate over new txids in original order
+        total_size = 0
         for i, txid_hex in enumerate(new_txids):
             if txid_hex in old_txids_set:
                 continue
             if time.time() > next_report:
                 LOG.info(
-                    "fetched %d mempool txs [%.1f%%]", i, 100.0 * i / len(new_txids)
+                    "fetched %d mempool txs [%.1f%%] %.3f MB",
+                    i,
+                    100.0 * i / len(new_txids),
+                    total_size / 1e6,
                 )
                 next_report += 1
             if tx := await self.try_get_tx(txid_hex):
-                await self.add(txid_hex, tx, scripthashes=scripthashes)
+                # transaction is added to mempool
+                await self.add_tx(txid_hex, tx, scripthashes=scripthashes)
+                total_size += tx["size"]
 
+        # marks that mempool resync is over
         self.next_seq = resp["mempool_sequence"]
         LOG.info(
             "fetched %d mempool txs, next_seq=%s (%.3fs)",
@@ -271,54 +285,61 @@ class Mempool:
             time.time() - t,
         )
 
-    async def sync(self) -> MempoolUpdate:
+    async def update(self) -> MempoolUpdate:
         t = time.time()
-        count = self.notifications.qsize()
-        events = []
         result = MempoolUpdate(scripthashes=set(), new_tip=False)
-        for _ in range(count):
-            (event, hash_hex, mempool_seq) = self.notifications.get_nowait()
+
+        # Handle a batch of ZMQ messages (without blocking)
+        # If a block is found, drop all previous mempool events (since we'll resync mempool anyway)
+        messages = []
+        for _ in range(self.zmq_messages.qsize()):
+            (event, hash_hex, mempool_seq) = self.zmq_messages.get_nowait()
             if event in (Event.BLOCK_CONNECT, Event.BLOCK_DISCONNECT):
+                LOG.info("block %s event [%s]", hash_hex, chr(event))
                 # resync mempool after new/stale block
                 self.next_seq = None
+                # will trigger `bindex` update and lookup
                 result.new_tip = True
-                events.clear()
+                messages.clear()
             else:
                 assert mempool_seq is not None
-                events.append((event, hash_hex, mempool_seq))
+                messages.append((event, hash_hex, mempool_seq))
 
-        async with aiohttp.ClientSession() as session:
-            if self.next_seq is None:
-                await self.sync_all(session, scripthashes=result.scripthashes)
+        if self.next_seq is None:
+            # We are out of sync - resync mempool transactions (using REST API)
+            await self.resync(scripthashes=result.scripthashes)
 
-            for event, hash_hex, mempool_seq in events:
-                if mempool_seq < self.next_seq:
-                    continue
-                if mempool_seq > self.next_seq:
-                    LOG.warning("skipped seq: %d > %d", mempool_seq, self.next_seq)
+        stats = defaultdict(int)
+        for event, hash_hex, mempool_seq in messages:
+            if mempool_seq < self.next_seq:
+                continue
+            if mempool_seq > self.next_seq:
+                LOG.warning("skipped seq: %d > %d", mempool_seq, self.next_seq)
 
-                if event is Event.TX_ADD:
-                    if tx := await self.try_get_tx(hash_hex):
-                        await self.add(
-                            hash_hex,
-                            tx,
-                            scripthashes=result.scripthashes,
-                        )
-                elif event is Event.TX_REMOVE:
-                    self.remove(hash_hex, scripthashes=result.scripthashes)
-                else:
-                    raise NotImplementedError(event)
+            if event is Event.TX_ADD:
+                if tx := await self.try_get_tx(hash_hex):
+                    await self.add_tx(
+                        hash_hex,
+                        tx,
+                        scripthashes=result.scripthashes,
+                    )
+            elif event is Event.TX_REMOVE:
+                self.remove_tx(hash_hex, scripthashes=result.scripthashes)
+            else:
+                raise NotImplementedError(event)
 
-                LOG.debug("%s @ %d (%s)", hash_hex, mempool_seq, event)
-                self.next_seq = mempool_seq + 1
+            LOG.debug("%s @ %d (%s)", hash_hex, mempool_seq, event)
+            self.next_seq = mempool_seq + 1
+            stats[event] += 1
 
-            LOG.debug(
-                "handled %d events: %d txs, seq=%s (%.2fs)",
-                len(events),
-                len(self.tx_entries),
-                self.next_seq,
-                time.time() - t,
-            )
+        LOG.debug(
+            "handled %d events: %d txs, seq=%s (%.3fs) %s",
+            len(messages),
+            len(self.tx_entries),
+            self.next_seq,
+            time.time() - t,
+            ", ".join(f"{chr(k)}={v}" for k, v in stats.items()),
+        )
 
         return result
 
@@ -327,8 +348,7 @@ class Manager:
     def __init__(self, http: HttpClient):
         self.db = sqlite3.connect(CACHE_DB)
         self.merkle = merkle.Merkle()
-        self.sync_queue = asyncio.Queue()
-        self.notifications = asyncio.Queue()  # ZMQ notifications
+        self.subscription_queue = asyncio.Queue()
         self.mempool = Mempool(http)
         self.http = http
         self.sessions: set[ElectrumSession] = set()
@@ -385,7 +405,7 @@ ORDER BY
 
     async def subscribe(self, hashX: bytes):
         event = asyncio.Event()
-        await self.sync_queue.put((hashX, event.set))
+        await self.subscription_queue.put((hashX, event.set))
         await event.wait()
 
     async def _merkle_branch(self, height, tx_hashes, tx_pos):
@@ -850,36 +870,34 @@ class Indexer:
     async def sync(self) -> bool:
         prev_tip = self.tip
         await self._notify_bindex()  # update `bindex` (start an indexing iteration)
-        self.tip = await self._read_tip()  # wait for the above indexing iteration to finish
+        self.tip = await self._read_tip()  # wait for the indexing iteration to finish
         LOG.debug("indexer at block=%r", self.tip)
         return prev_tip != self.tip
 
 
-async def sync_task(mgr: Manager, indexer: Indexer):
+async def subscription_task(mgr: Manager, indexer: Indexer):
     try:
         # sending new scripthashes on subscription requests
         while True:
-            items = await get_items(mgr.sync_queue)
-            data = [[i] for i, _ in items]
-            update_scripthashes(mgr.db.cursor(), data)
+            reqs = await get_items(mgr.subscription_queue)
+            update_scripthashes(mgr.db.cursor(), data=[[i] for i, _ in reqs])
 
-            # update history index for the new scripthashes
+            # update `bindex`
             chain_updated = await indexer.sync()
-            if items or chain_updated:
-                LOG.info("indexer at block=%r: %d reqs", indexer.tip, len(items))
+
+            # update mempool via ZMQ notifications (or resync, if needed)
+            mempool_update = await mgr.mempool.update()
+
+            if reqs or chain_updated:
+                LOG.info("indexer at block=%r: %d reqs", indexer.tip, len(reqs))
 
             # mark subscription requests as done
-            for _, ack_fn in items:
+            for _, ack_fn in reqs:
                 ack_fn()
 
-            # fetch ZMQ notifications
-            mempool_update = await mgr.mempool.sync()
-            mempool_updated = mempool_update.scripthashes.intersection(
-                get_scripthashes(mgr.db.cursor())
-            )
-
             # make sure all sessions are notified
-            if chain_updated or mempool_updated:
+            watched = get_scripthashes(mgr.db.cursor())
+            if chain_updated or mempool_update.scripthashes.intersection(watched):
                 await mgr.notify_sessions()
     except Exception:
         LOG.exception("sync_task() failed")
@@ -901,15 +919,18 @@ async def main():
         info = await http.json_rpc("getblockchaininfo")
         assert info["chain"] == chain
 
-        indexer = await Indexer.start()  # wait for initial sync
+        indexer = await Indexer.start()  # wait for initial index sync
         mgr = Manager(http)
         env = Env(await mgr.raw_header(0))
         cls = functools.partial(ElectrumSession, env=env, mgr=mgr)
         await serve_rs(cls, host=HOST, port=PORT)
         async with TaskGroup() as g:
-            await g.spawn(sync_task(mgr, indexer))
+            await g.spawn(subscription_task(mgr, indexer))
             if ZMQ_ADDR:
-                await g.spawn(subscribe_events(ZMQ_ADDR, mgr.mempool.notify))
+                # calls Mempool.notify() when ZMQ message is received
+                await g.spawn(subscribe_events(ZMQ_ADDR, mgr.mempool.enqueue_message))
+            else:
+                logging.warning("Set ZMQ_ADDR to sync mempool")
             await g.join()
 
 
