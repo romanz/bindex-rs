@@ -39,7 +39,7 @@ impl Header {
 
     pub fn deserialize((key, value): SerializedHeaderRow) -> Self {
         Self {
-            next_txnum: TxNum(u64::from_be_bytes(key)),
+            next_txnum: TxNum::deserialize(key),
             hash: BlockHash::from_byte_array(value[..BLOCK_HASH_LEN].try_into().unwrap()),
             header: bitcoin::consensus::encode::deserialize(&value[BLOCK_HASH_LEN..]).unwrap(),
         }

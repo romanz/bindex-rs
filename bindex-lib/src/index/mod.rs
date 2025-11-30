@@ -44,12 +44,12 @@ impl From<ScriptHash> for Prefix {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Default)]
-pub struct TxNum(u64);
+pub struct TxNum(u32);
 
 impl TxNum {
     const LEN: usize = std::mem::size_of::<Self>();
 
-    pub fn offset_from(&self, base: TxNum) -> Option<u64> {
+    pub fn offset_from(&self, base: TxNum) -> Option<u32> {
         self.0.checked_sub(base.0)
     }
 
@@ -58,7 +58,7 @@ impl TxNum {
     }
 
     pub fn deserialize(bytes: [u8; Self::LEN]) -> Self {
-        Self(u64::from_be_bytes(bytes))
+        Self(u32::from_be_bytes(bytes))
     }
 }
 
@@ -194,11 +194,11 @@ mod tests {
 
     #[test]
     fn test_serde_row() {
-        let txnum = TxNum(0x123456789ABCDEF0);
+        let txnum = TxNum(0x12345678);
         let row = Row::new(Prefix([1, 2, 3, 4, 5, 6, 7, 8]), txnum);
         assert_eq!(row.txnum(), txnum);
         let data = row.bytes;
-        assert_eq!(data, hex!("0102030405060708123456789abcdef0"));
+        assert_eq!(data, hex!("010203040506070812345678"));
         assert_eq!(Row::from_bytes(data), row);
     }
 

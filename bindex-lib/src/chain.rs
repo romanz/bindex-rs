@@ -102,7 +102,7 @@ impl Chain {
 pub struct Location<'a> {
     pub txnum: index::TxNum, // tx number (position within the chain)
     pub height: usize,       // block height
-    pub offset: u64,         // tx position within its block
+    pub offset: u32,         // tx position within its block
     pub indexed_header: &'a index::Header,
 }
 
