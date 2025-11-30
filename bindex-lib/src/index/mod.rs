@@ -60,6 +60,10 @@ impl TxNum {
         self.0.checked_sub(base.0)
     }
 
+    fn increment(&mut self) {
+        self.0 += 1;
+    }
+
     pub fn serialize(&self) -> [u8; Self::LEN] {
         self.0.to_be_bytes()
     }

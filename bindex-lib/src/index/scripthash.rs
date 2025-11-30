@@ -40,7 +40,7 @@ impl<'a> IndexVisitor<'a> {
     }
 
     fn finish_tx(&mut self) {
-        self.txnum.0 += 1;
+        self.txnum.increment()
     }
 }
 

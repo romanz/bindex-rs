@@ -188,7 +188,7 @@ impl bitcoin_slices::Visitor for TxPosVisitor<'_> {
             size: tx_size,
         };
         self.positions.push((self.tx_num, tx_pos));
-        self.tx_num.0 += 1;
+        self.tx_num.increment();
         self.tx_offset += tx_size;
         ControlFlow::Continue(())
     }
