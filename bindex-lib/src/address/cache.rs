@@ -136,7 +136,7 @@ impl Cache {
                     self.db.path().unwrap_or("")
                 );
             }
-
+            // Note: some headers/transactions can be false-positives:
             self.sync_headers(new_headers.into_iter())?;
             self.sync_transactions(new_locations.into_iter(), index)?;
             self.sync_history(new_history.into_iter())?;
