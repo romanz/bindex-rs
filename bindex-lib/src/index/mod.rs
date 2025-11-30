@@ -23,13 +23,13 @@ pub enum Error {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
-pub struct HashPrefix([u8; HashPrefix::LEN]);
+pub struct Prefix([u8; Prefix::LEN]);
 
-impl HashPrefix {
+impl Prefix {
     const LEN: usize = 8;
 
     fn new(hash: &[u8]) -> Self {
-        Self(hash[..HashPrefix::LEN].try_into().unwrap())
+        Self(hash[..Prefix::LEN].try_into().unwrap())
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -37,7 +37,7 @@ impl HashPrefix {
     }
 }
 
-impl From<ScriptHash> for HashPrefix {
+impl From<ScriptHash> for Prefix {
     fn from(value: ScriptHash) -> Self {
         Self::new(&value[..])
     }
@@ -63,30 +63,30 @@ impl TxNum {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
-pub struct HashPrefixRow {
-    key: [u8; HashPrefixRow::LEN],
+pub struct Row {
+    bytes: [u8; Row::LEN],
 }
 
-impl HashPrefixRow {
-    const LEN: usize = HashPrefix::LEN + TxNum::LEN;
+impl Row {
+    const LEN: usize = Prefix::LEN + TxNum::LEN;
 
-    pub fn new(prefix: HashPrefix, txnum: TxNum) -> Self {
-        let mut result = [0u8; HashPrefix::LEN + TxNum::LEN];
-        result[..HashPrefix::LEN].copy_from_slice(&prefix.0);
-        result[HashPrefix::LEN..].copy_from_slice(&txnum.serialize());
-        Self { key: result }
+    pub fn new(prefix: Prefix, txnum: TxNum) -> Self {
+        let mut bytes = [0u8; Prefix::LEN + TxNum::LEN];
+        bytes[..Prefix::LEN].copy_from_slice(&prefix.0);
+        bytes[Prefix::LEN..].copy_from_slice(&txnum.serialize());
+        Self { bytes }
     }
 
     pub fn key(&self) -> &[u8] {
-        &self.key
+        &self.bytes
     }
 
-    pub fn from_bytes(key: [u8; Self::LEN]) -> Self {
-        Self { key }
+    pub fn from_bytes(bytes: [u8; Self::LEN]) -> Self {
+        Self { bytes }
     }
 
     pub fn txnum(&self) -> TxNum {
-        TxNum::deserialize(self.key[HashPrefix::LEN..].try_into().unwrap())
+        TxNum::deserialize(self.bytes[Prefix::LEN..].try_into().unwrap())
     }
 }
 
@@ -119,7 +119,7 @@ impl SpentBytes {
 }
 
 pub struct Batch {
-    pub script_hash_rows: Vec<HashPrefixRow>,
+    pub script_hash_rows: Vec<Row>,
     pub txpos_rows: Vec<txpos::TxPosRow>,
     pub header: Header,
 }
@@ -195,11 +195,11 @@ mod tests {
     #[test]
     fn test_serde_row() {
         let txnum = TxNum(0x123456789ABCDEF0);
-        let row = HashPrefixRow::new(HashPrefix([1, 2, 3, 4, 5, 6, 7, 8]), txnum);
+        let row = Row::new(Prefix([1, 2, 3, 4, 5, 6, 7, 8]), txnum);
         assert_eq!(row.txnum(), txnum);
-        let data = row.key;
+        let data = row.bytes;
         assert_eq!(data, hex!("0102030405060708123456789abcdef0"));
-        assert_eq!(HashPrefixRow::from_bytes(data), row);
+        assert_eq!(Row::from_bytes(data), row);
     }
 
     #[test]
