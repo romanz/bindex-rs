@@ -1,6 +1,6 @@
 use std::ops::ControlFlow;
 
-use super::{BlockBytes, Error, TxNum, BLOCK_HEADER_LEN};
+use super::{BlockBytes, Error, TxNum};
 use bitcoin::consensus::{Decodable, Encodable};
 use bitcoin_slices::{bsl, Visit as _};
 
@@ -158,7 +158,7 @@ impl<'a> TxPosVisitor<'a> {
         Self {
             positions,
             tx_num,
-            tx_offset: BLOCK_HEADER_LEN as u32,
+            tx_offset: bitcoin::block::Header::SIZE as u32,
         }
     }
 }
