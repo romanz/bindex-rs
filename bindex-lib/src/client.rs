@@ -89,6 +89,7 @@ impl Client {
         Ok(index::BlockBytes::new(data))
     }
 
+    // Supported by bitcoind 30.0+
     pub fn get_spent_bytes(&self, hash: BlockHash) -> Result<index::SpentBytes, Error> {
         let url = format!("{}/rest/spenttxouts/{}.bin", self.url, hash);
         let data = self.get_bytes(&url)?;
