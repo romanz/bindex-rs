@@ -166,7 +166,7 @@ impl Store {
         from: index::TxNum,
     ) -> Result<impl Iterator<Item = index::TxNum>, rocksdb::Error> {
         let cf = self.cf(SCRIPT_HASH_CF);
-        let mut positions = Vec::new();
+        let mut txnums = Vec::new();
 
         let hash_prefix = (*script_hash).into();
         let start = index::Row::new(hash_prefix, from);
@@ -178,9 +178,9 @@ impl Store {
             }
             let row = index::Row::from_bytes(key[..].try_into().unwrap());
             assert!(row.txnum() >= from);
-            positions.push(row.txnum());
+            txnums.push(row.txnum());
         }
-        Ok(positions.into_iter())
+        Ok(txnums.into_iter())
     }
 
     pub fn get_tx_pos(&self, txnum: index::TxNum) -> Result<index::TxPos, rocksdb::Error> {
