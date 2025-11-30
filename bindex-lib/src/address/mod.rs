@@ -71,7 +71,8 @@ impl Index {
             Err(client::Error::Http(ureq::Error::StatusCode(404))) => Err(Error::NotSupported)?,
             res => res?,
         };
-        match client.get_tx_bytes_from_block(genesis_hash, 0, 1) {
+        let dummy_txpos = index::TxPos { offset: 0, size: 1 };
+        match client.get_tx_bytes_from_block(genesis_hash, dummy_txpos) {
             Err(client::Error::Http(ureq::Error::StatusCode(404))) => Err(Error::NotSupported)?,
             res => res?,
         };
@@ -200,11 +201,9 @@ impl Index {
 
     fn get_tx_bytes(&self, location: &Location) -> Result<Vec<u8>, Error> {
         let pos = self.store.get_tx_pos(location.txnum)?;
-        Ok(self.client.get_tx_bytes_from_block(
-            location.indexed_header.hash(),
-            pos.offset,
-            pos.size,
-        )?)
+        Ok(self
+            .client
+            .get_tx_bytes_from_block(location.indexed_header.hash(), pos)?)
     }
 
     fn chain(&self) -> &Chain {

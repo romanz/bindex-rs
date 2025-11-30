@@ -212,9 +212,11 @@ impl Cache {
             .last_indexed_header(script_hash, chain)?
             .map(index::Header::next_txnum)
             .unwrap_or_default();
-        index.locations_by_scripthash(script_hash, from)?.for_each(|loc| {
-            history.insert((*script_hash, loc));
-        });
+        index
+            .locations_by_scripthash(script_hash, from)?
+            .for_each(|loc| {
+                history.insert((*script_hash, loc));
+            });
         Ok(())
     }
 

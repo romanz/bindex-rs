@@ -98,12 +98,11 @@ impl Client {
     pub fn get_tx_bytes_from_block(
         &self,
         hash: BlockHash,
-        offset: u32,
-        size: u32,
+        txpos: index::TxPos,
     ) -> Result<Vec<u8>, Error> {
         let url = format!(
             "{}/rest/blockpart/{}.bin?offset={}&size={}",
-            self.url, hash, offset, size
+            self.url, hash, txpos.offset, txpos.size
         );
         self.get_bytes(&url)
     }
