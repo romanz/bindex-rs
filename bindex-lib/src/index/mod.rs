@@ -26,12 +26,18 @@ pub struct HashPrefix([u8; HashPrefix::LEN]);
 impl HashPrefix {
     const LEN: usize = 8;
 
-    pub fn new(hash: &[u8]) -> Self {
+    fn new(hash: &[u8]) -> Self {
         Self(hash[..HashPrefix::LEN].try_into().unwrap())
     }
 
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+}
+
+impl From<ScriptHash> for HashPrefix {
+    fn from(value: ScriptHash) -> Self {
+        Self::new(&value[..])
     }
 }
 

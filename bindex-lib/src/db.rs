@@ -168,12 +168,12 @@ impl Store {
         let cf = self.cf(SCRIPT_HASH_CF);
         let mut positions = Vec::new();
 
-        let prefix = index::HashPrefix::new(&script_hash[..]);
-        let start = index::HashPrefixRow::new(prefix, from);
+        let hash_prefix = (*script_hash).into();
+        let start = index::HashPrefixRow::new(hash_prefix, from);
         let mode = rocksdb::IteratorMode::From(start.key(), rocksdb::Direction::Forward);
         for kv in self.db.iterator_cf(cf, mode) {
             let (key, _) = kv?;
-            if !key.starts_with(prefix.as_bytes()) {
+            if !key.starts_with(hash_prefix.as_bytes()) {
                 break;
             }
             let row = index::HashPrefixRow::from_bytes(key[..].try_into().unwrap());
