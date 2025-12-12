@@ -15,7 +15,7 @@ pub enum Error {
     #[error("client failed: {0}")]
     Client(#[from] client::Error),
 
-    #[error("use https://github.com/bitcoin/bitcoin/compare/master...romanz:bitcoin:bindex")]
+    #[error("use https://github.com/bitcoin/bitcoin/pull/33657")]
     NotSupported,
 
     #[error("indexing failed: {0:?}")]
