@@ -7,7 +7,7 @@ See [slides](https://docs.google.com/presentation/d/1Zez-6DApKRu59kke4i_g9jwxQla
 
 ## Requirements
 
-Currently, querying it requires Bitcoin Core 30 with the following PR:
+Currently, querying it requires Bitcoin Core 30 with the merged PR:
 
 - https://github.com/bitcoin/bitcoin/pull/33657
 
