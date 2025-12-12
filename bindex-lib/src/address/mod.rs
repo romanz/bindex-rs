@@ -200,7 +200,9 @@ impl Index {
     }
 
     fn get_tx_bytes(&self, location: &Location) -> Result<Vec<u8>, Error> {
+        // Lookup tx position within its block (offset & size)
         let pos = self.store.get_tx_pos(location.txnum)?;
+        // Fetch the bytes from bitcoind
         Ok(self
             .client
             .get_tx_bytes_from_block(location.indexed_header.hash(), pos)?)
