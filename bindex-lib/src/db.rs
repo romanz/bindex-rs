@@ -100,8 +100,7 @@ impl Store {
             write_batch.put_cf(cf, key, value);
         }
 
-        let mut opts = rocksdb::WriteOptions::default();
-        opts.disable_wal(false);
+        let opts = rocksdb::WriteOptions::default();
         self.db.write_opt(write_batch, &opts)?;
         Ok(())
     }
@@ -133,8 +132,7 @@ impl Store {
             write_batch.delete_cf(cf, key);
         }
 
-        let mut opts = rocksdb::WriteOptions::default();
-        opts.disable_wal(true);
+        let opts = rocksdb::WriteOptions::default();
         self.db.write_opt(write_batch, &opts)?;
         Ok(())
     }
