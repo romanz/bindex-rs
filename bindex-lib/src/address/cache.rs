@@ -332,6 +332,7 @@ impl Cache {
             .prepare("UPDATE watch SET is_active = TRUE")?
             .execute([])?)
     }
+
     fn last_indexed_header<'a>(
         &self,
         script_hash: &ScriptHash,
