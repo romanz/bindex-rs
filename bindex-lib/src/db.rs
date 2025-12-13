@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::index::{self, TxPosRow};
+use crate::index::{self, TxBlockPosRow};
 
 use log::*;
 
@@ -91,7 +91,7 @@ impl Store {
         batches
             .iter()
             .flat_map(|batch| batch.txpos_rows.iter())
-            .map(index::TxPosRow::serialize)
+            .map(index::TxBlockPosRow::serialize)
             .for_each(|(k, v)| write_batch.put_cf(cf, k, v));
 
         let cf = self.cf(HEADERS_CF);
@@ -122,7 +122,7 @@ impl Store {
         batches
             .iter()
             .flat_map(|batch| batch.txpos_rows.iter())
-            .map(index::TxPosRow::serialize)
+            .map(index::TxBlockPosRow::serialize)
             .for_each(|(k, _v)| write_batch.delete_cf(cf, k));
 
         let cf = self.cf(HEADERS_CF);
@@ -184,7 +184,10 @@ impl Store {
     }
 
     /// Lookup transaction position (offset & size) within its block.
-    pub fn get_tx_pos(&self, txnum: index::TxNum) -> Result<index::TxPos, rocksdb::Error> {
+    pub fn get_tx_block_pos(
+        &self,
+        txnum: index::TxNum,
+    ) -> Result<index::TxBlockPos, rocksdb::Error> {
         let cf = self.cf(TXPOS_CF);
 
         let from_key = txnum.serialize();
@@ -192,8 +195,8 @@ impl Store {
         if let Some(kv) = self.db.iterator_cf(cf, mode).next() {
             let (key, value) = kv?;
             assert!(from_key[..] <= key[..]);
-            let row = TxPosRow::deserialize(&key, &value);
-            return Ok(row.get_tx_pos(txnum));
+            let row = TxBlockPosRow::deserialize(&key, &value);
+            return Ok(row.get_tx_block_pos(txnum));
         }
         panic!("Missing {:?}", txnum)
     }

@@ -71,7 +71,7 @@ impl Index {
             Err(client::Error::Http(ureq::Error::StatusCode(404))) => Err(Error::NotSupported)?,
             res => res?,
         };
-        let dummy_txpos = index::TxPos { offset: 0, size: 1 };
+        let dummy_txpos = index::TxBlockPos { offset: 0, size: 1 };
         match client.get_tx_bytes_from_block(genesis_hash, dummy_txpos) {
             Err(client::Error::Http(ureq::Error::StatusCode(404))) => Err(Error::NotSupported)?,
             res => res?,
@@ -203,7 +203,7 @@ impl Index {
 
     fn get_tx_bytes(&self, location: &Location) -> Result<Vec<u8>, Error> {
         // Lookup tx position within its block (offset & size)
-        let pos = self.store.get_tx_pos(location.txnum)?;
+        let pos = self.store.get_tx_block_pos(location.txnum)?;
         // Fetch the bytes from bitcoind
         Ok(self
             .client

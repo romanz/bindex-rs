@@ -8,7 +8,7 @@ use crate::chain::Chain;
 
 pub use header::Header;
 pub use scripthash::ScriptHash;
-pub use txpos::{TxPos, TxPosRow};
+pub use txpos::{TxBlockPos, TxBlockPosRow};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -129,7 +129,7 @@ impl SpentBytes {
 
 pub struct Batch {
     pub script_hash_rows: Vec<Row>,
-    pub txpos_rows: Vec<txpos::TxPosRow>,
+    pub txpos_rows: Vec<txpos::TxBlockPosRow>,
     pub header: Header,
 }
 
