@@ -25,6 +25,8 @@ pub enum Error {
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
 pub struct Prefix([u8; Prefix::LEN]);
 
+/// Fixed-size prefix of a hash (e.g. ScriptHash, Txid).
+/// The resulting index uses less storage, but requires lookup post-filtering (to avoid false negatives).
 impl Prefix {
     const LEN: usize = 8;
 
@@ -43,6 +45,11 @@ impl From<ScriptHash> for Prefix {
     }
 }
 
+/// Represents the "chronological" position of a confirmed transaction in the chain.
+/// It is used as the globally unique transaction identifier for efficient storage encoding
+/// (instead of 32-byte pseudo-random transaction hash).
+/// There has been ~1.3e9 transactions at Dec. 2025, so using `u32` here should be OK till ~2060.
+/// Big-endian encoding is used to make lexicographic order and "choronological" order the same.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Default)]
 pub struct TxNum(u32);
 
@@ -62,6 +69,8 @@ impl TxNum {
     }
 }
 
+/// Serialized and concatenated `prefix` & `txnum`, to be stored in a RockDB key-only entry.
+/// RocksDB prefix scan is used to collect all `txnum`s matching a specific ScriptHash/Txid.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
 pub struct Row {
     bytes: [u8; Row::LEN],

@@ -182,6 +182,7 @@ impl Index {
                 stats.size_read as f64 / (1e6 * stats.elapsed.as_secs_f64()),
             );
         } else {
+            // Start autocompactions when there are no new indexed blocks
             self.store.start_compactions()?;
         }
         Ok(stats)
@@ -195,6 +196,7 @@ impl Index {
         Ok(self
             .store
             .scan_by_script_hash(script_hash, from)?
+            .into_iter()
             // chain and store must be in sync
             .map(|txnum| self.chain.find_by_txnum(txnum).expect("invalid txnum")))
     }

@@ -158,16 +158,18 @@ impl Store {
         Ok(())
     }
 
+    /// Collect a list of `TxNum`s for specified `script_hash`.
     pub fn scan_by_script_hash(
         &self,
         script_hash: &index::ScriptHash,
         from: index::TxNum,
-    ) -> Result<impl Iterator<Item = index::TxNum>, rocksdb::Error> {
+    ) -> Result<Vec<index::TxNum>, rocksdb::Error> {
         let cf = self.cf(SCRIPT_HASH_CF);
         let mut txnums = Vec::new();
 
         let hash_prefix = (*script_hash).into();
         let start = index::Row::new(hash_prefix, from);
+        // Allow resuming iteration from a specified txnum (for incremental sync)
         let mode = rocksdb::IteratorMode::From(start.key(), rocksdb::Direction::Forward);
         for kv in self.db.iterator_cf(cf, mode) {
             let (key, _) = kv?;
@@ -178,9 +180,10 @@ impl Store {
             assert!(row.txnum() >= from);
             txnums.push(row.txnum());
         }
-        Ok(txnums.into_iter())
+        Ok(txnums)
     }
 
+    /// Lookup transaction position (offset & size) within its block.
     pub fn get_tx_pos(&self, txnum: index::TxNum) -> Result<index::TxPos, rocksdb::Error> {
         let cf = self.cf(TXPOS_CF);
 
@@ -195,6 +198,7 @@ impl Store {
         panic!("Missing {:?}", txnum)
     }
 
+    /// Load all headers from DB.
     pub fn headers(&self) -> Result<Vec<index::Header>, rocksdb::Error> {
         let cf = self.cf(HEADERS_CF);
         let mut result = vec![];
