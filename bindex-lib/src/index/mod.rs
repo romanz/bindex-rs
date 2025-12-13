@@ -81,7 +81,7 @@ impl Row {
 
     pub fn new(prefix: Prefix, txnum: TxNum) -> Self {
         let mut bytes = [0u8; Prefix::LEN + TxNum::LEN];
-        bytes[..Prefix::LEN].copy_from_slice(&prefix.0);
+        bytes[..Prefix::LEN].copy_from_slice(prefix.as_bytes());
         bytes[Prefix::LEN..].copy_from_slice(&txnum.serialize());
         Self { bytes }
     }
