@@ -3,7 +3,7 @@ use std::ops::ControlFlow;
 use bitcoin::hashes::Hash;
 use bitcoin_slices::{bsl, Parse, Visit};
 
-use crate::index::{BlockBytes, BlockIndex, Error, Prefix, Row, SpentBytes, TxNum};
+use crate::index::{BlockBytes, BlockIndex, Error, HashPrefixRow, Prefix, SpentBytes, TxNum};
 
 bitcoin::hashes::hash_newtype! {
     /// https://electrumx-spesmilo.readthedocs.io/en/latest/protocol-basics.html#script-hashes
@@ -18,12 +18,12 @@ impl ScriptHash {
 }
 
 struct IndexVisitor<'a> {
-    rows: &'a mut Vec<Row>,
+    rows: &'a mut Vec<HashPrefixRow>,
     txnum: TxNum,
 }
 
 impl<'a> IndexVisitor<'a> {
-    fn new(txnum: TxNum, rows: &'a mut Vec<Row>) -> Self {
+    fn new(txnum: TxNum, rows: &'a mut Vec<HashPrefixRow>) -> Self {
         Self { txnum, rows }
     }
 
@@ -33,8 +33,10 @@ impl<'a> IndexVisitor<'a> {
             return;
         }
         let script_hash = ScriptHash::new(script);
-        self.rows
-            .push(Row::new(Prefix::new(&script_hash[..]), self.txnum));
+        self.rows.push(HashPrefixRow::new(
+            Prefix::new(&script_hash[..]),
+            self.txnum,
+        ));
     }
 
     fn finish_tx(&mut self) {
@@ -85,7 +87,11 @@ fn visit_spent<'a>(
     Ok(bitcoin_slices::ParseResult::new(&slice[consumed..], Spent))
 }
 
-fn add_block_rows(block: &BlockBytes, txnum: TxNum, rows: &mut Vec<Row>) -> Result<TxNum, Error> {
+fn add_block_rows(
+    block: &BlockBytes,
+    txnum: TxNum,
+    rows: &mut Vec<HashPrefixRow>,
+) -> Result<TxNum, Error> {
     let mut visitor = IndexVisitor::new(txnum, rows);
     let res = bsl::Block::visit(&block.0, &mut visitor).map_err(Error::Parse)?;
     if !res.remaining().is_empty() {
@@ -94,7 +100,11 @@ fn add_block_rows(block: &BlockBytes, txnum: TxNum, rows: &mut Vec<Row>) -> Resu
     Ok(visitor.txnum)
 }
 
-fn add_spent_rows(spent: &SpentBytes, txnum: TxNum, rows: &mut Vec<Row>) -> Result<TxNum, Error> {
+fn add_spent_rows(
+    spent: &SpentBytes,
+    txnum: TxNum,
+    rows: &mut Vec<HashPrefixRow>,
+) -> Result<TxNum, Error> {
     let mut visitor = IndexVisitor::new(txnum, rows);
     let res = visit_spent(&spent.0, &mut visitor).map_err(Error::Parse)?;
     if !res.remaining().is_empty() {
@@ -107,7 +117,7 @@ pub fn index(
     block: &BlockBytes,
     spent: &SpentBytes,
     txnum: TxNum,
-) -> Result<BlockIndex<Row>, Error> {
+) -> Result<BlockIndex<HashPrefixRow>, Error> {
     let mut result = BlockIndex::new(txnum);
     let txnum1 = add_block_rows(block, txnum, &mut result.rows)?;
     let txnum2 = add_spent_rows(spent, txnum, &mut result.rows)?;
@@ -143,12 +153,12 @@ mod tests {
         assert_eq!(
             block_rows,
             vec![
-                Row::new(Prefix(hex!("e2151d493a1f9999")), TxNum(10)),
-                Row::new(Prefix(hex!("050b00fb9d5f7a63")), TxNum(11)),
-                Row::new(Prefix(hex!("b5a1091a739a6aba")), TxNum(11)),
-                Row::new(Prefix(hex!("03b0bfb44fd9d852")), TxNum(12)),
-                Row::new(Prefix(hex!("0faa9934b57389f2")), TxNum(12)),
-                Row::new(Prefix(hex!("4a569bc2092bcaf9")), TxNum(13))
+                HashPrefixRow::new(Prefix(hex!("e2151d493a1f9999")), TxNum(10)),
+                HashPrefixRow::new(Prefix(hex!("050b00fb9d5f7a63")), TxNum(11)),
+                HashPrefixRow::new(Prefix(hex!("b5a1091a739a6aba")), TxNum(11)),
+                HashPrefixRow::new(Prefix(hex!("03b0bfb44fd9d852")), TxNum(12)),
+                HashPrefixRow::new(Prefix(hex!("0faa9934b57389f2")), TxNum(12)),
+                HashPrefixRow::new(Prefix(hex!("4a569bc2092bcaf9")), TxNum(13))
             ]
         );
 
@@ -161,9 +171,9 @@ mod tests {
         assert_eq!(
             spent_rows,
             vec![
-                Row::new(Prefix(hex!("4d5bea28470692cd")), TxNum(11)),
-                Row::new(Prefix(hex!("e9b09b065b5f43c2")), TxNum(12)),
-                Row::new(Prefix(hex!("2e7cdb30882b427d")), TxNum(13)),
+                HashPrefixRow::new(Prefix(hex!("4d5bea28470692cd")), TxNum(11)),
+                HashPrefixRow::new(Prefix(hex!("e9b09b065b5f43c2")), TxNum(12)),
+                HashPrefixRow::new(Prefix(hex!("2e7cdb30882b427d")), TxNum(13)),
             ]
         );
 
@@ -186,7 +196,11 @@ mod tests {
         Ok(())
     }
 
-    fn decode_spent(buf: &[u8], txnum: TxNum, rows: &mut Vec<Row>) -> Result<TxNum, Error> {
+    fn decode_spent(
+        buf: &[u8],
+        txnum: TxNum,
+        rows: &mut Vec<HashPrefixRow>,
+    ) -> Result<TxNum, Error> {
         let mut visitor = IndexVisitor::new(txnum, rows);
         let mut r = bitcoin::io::Cursor::new(buf);
         let txs_count = bitcoin::VarInt::consensus_decode_from_finite_reader(&mut r)?.0;

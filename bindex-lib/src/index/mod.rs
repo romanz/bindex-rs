@@ -72,30 +72,30 @@ impl TxNum {
 /// Serialized and concatenated `prefix` & `txnum`, to be stored in a RockDB key-only entry.
 /// RocksDB prefix scan is used to collect all `txnum`s matching a specific ScriptHash/Txid.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
-pub struct Row {
-    bytes: [u8; Row::LEN],
+pub struct HashPrefixRow {
+    key: [u8; HashPrefixRow::LEN],
 }
 
-impl Row {
+impl HashPrefixRow {
     const LEN: usize = Prefix::LEN + TxNum::LEN;
 
     pub fn new(prefix: Prefix, txnum: TxNum) -> Self {
-        let mut bytes = [0u8; Prefix::LEN + TxNum::LEN];
-        bytes[..Prefix::LEN].copy_from_slice(prefix.as_bytes());
-        bytes[Prefix::LEN..].copy_from_slice(&txnum.serialize());
-        Self { bytes }
+        let mut key = [0u8; Prefix::LEN + TxNum::LEN];
+        key[..Prefix::LEN].copy_from_slice(prefix.as_bytes());
+        key[Prefix::LEN..].copy_from_slice(&txnum.serialize());
+        Self { key }
     }
 
     pub fn key(&self) -> &[u8] {
-        &self.bytes
+        &self.key
     }
 
-    pub fn from_bytes(bytes: [u8; Self::LEN]) -> Self {
-        Self { bytes }
+    pub fn from_bytes(key: [u8; Self::LEN]) -> Self {
+        Self { key }
     }
 
     pub fn txnum(&self) -> TxNum {
-        TxNum::deserialize(self.bytes[Prefix::LEN..].try_into().unwrap())
+        TxNum::deserialize(self.key[Prefix::LEN..].try_into().unwrap())
     }
 }
 
@@ -128,7 +128,7 @@ impl SpentBytes {
 }
 
 pub struct Batch {
-    pub scripthash_rows: Vec<Row>,
+    pub scripthash_rows: Vec<HashPrefixRow>,
     pub txpos_rows: Vec<txpos::TxBlockPosRow>,
     pub header: Header,
 }
@@ -194,9 +194,10 @@ impl Builder {
         spent_bytes: &SpentBytes,
     ) -> Result<(), Error> {
         let batch = Batch::build(hash, self.next_txnum, block_bytes, spent_bytes)?;
-        assert_eq!(batch.header.header().prev_blockhash, self.tip);
-        self.next_txnum = batch.header.next_txnum();
-        self.tip = batch.header.hash();
+        let header = &batch.header;
+        assert_eq!(header.header().prev_blockhash, self.tip);
+        self.next_txnum = header.next_txnum();
+        self.tip = header.hash();
         self.batches.push(batch);
         Ok(())
     }
@@ -215,11 +216,11 @@ mod tests {
     #[test]
     fn test_serde_row() {
         let txnum = TxNum(0x12345678);
-        let row = Row::new(Prefix([1, 2, 3, 4, 5, 6, 7, 8]), txnum);
+        let row = HashPrefixRow::new(Prefix([1, 2, 3, 4, 5, 6, 7, 8]), txnum);
         assert_eq!(row.txnum(), txnum);
-        let data = row.bytes;
+        let data = row.key;
         assert_eq!(data, hex!("010203040506070812345678"));
-        assert_eq!(Row::from_bytes(data), row);
+        assert_eq!(HashPrefixRow::from_bytes(data), row);
     }
 
     #[test]
