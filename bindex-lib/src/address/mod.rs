@@ -119,8 +119,8 @@ impl Index {
         let stale = self.chain.pop().expect("cannot drop tip of an empty chain");
         let block_bytes = self.client.get_block_bytes(stale.hash())?;
         let spent_bytes = self.client.get_spent_bytes(stale.hash())?;
-        let mut builder = index::Builder::new(&self.chain);
-        builder.index(stale.hash(), &block_bytes, &spent_bytes)?;
+        let mut builder = index::IndexBuilder::new(&self.chain);
+        builder.add(stale.hash(), &block_bytes, &spent_bytes)?;
         self.store.delete(&builder.into_batches())?;
         Ok(stale.hash())
     }
@@ -149,7 +149,7 @@ impl Index {
             assert_eq!(blockhash, self.drop_tip()?);
         };
 
-        let mut builder = index::Builder::new(&self.chain);
+        let mut builder = index::IndexBuilder::new(&self.chain);
         for header in headers {
             let blockhash = header.block_hash();
             if self.chain.tip_hash() == Some(blockhash) {
@@ -158,7 +158,7 @@ impl Index {
             // TODO: can be done concurrently
             let block_bytes = self.client.get_block_bytes(blockhash)?;
             let spent_bytes = self.client.get_spent_bytes(blockhash)?;
-            builder.index(blockhash, &block_bytes, &spent_bytes)?;
+            builder.add(blockhash, &block_bytes, &spent_bytes)?;
 
             stats.tip = blockhash;
             stats.size_read += block_bytes.len();
