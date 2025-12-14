@@ -106,7 +106,6 @@ impl Cache {
                 script_hash BLOB NOT NULL,
                 script_bytes BLOB,
                 address TEXT,
-                is_active BOOLEAN,   -- is this address being actively watched (starts as NULL)
                 PRIMARY KEY (script_hash)
             ) WITHOUT ROWID",
             (),
@@ -114,11 +113,13 @@ impl Cache {
         Ok(())
     }
 
+    /// Synchornize index with current bitcoind state.
+    /// Return `true` iff the chain tip has been updated.
     pub fn sync(&self, index: &address::Index, tip: &mut BlockHash) -> Result<bool, Error> {
         self.run("sync", || {
             self.drop_stale_blocks(&index.chain)?;
             let new_tip = index.chain.tip_hash().unwrap_or_else(BlockHash::all_zeros);
-            if *tip == new_tip && self.all_active()? {
+            if *tip == new_tip {
                 return Ok(false);
             }
             let new_history = self.new_history(index)?;
@@ -137,24 +138,12 @@ impl Cache {
                 );
             }
             // Note: some headers/transactions can be false-positives:
-            self.sync_headers(new_headers.into_iter())?;
-            self.sync_transactions(new_locations.into_iter(), index)?;
-            self.sync_history(new_history.into_iter())?;
-            self.sync_watch()?;
+            self.add_headers(new_headers.into_iter())?;
+            self.add_transactions(new_locations.into_iter(), index)?;
+            self.add_history(new_history.into_iter())?;
             *tip = new_tip;
             Ok(true)
         })
-    }
-
-    pub fn all_active(&self) -> Result<bool, Error> {
-        Ok(self.db.query_row(
-            "SELECT EXISTS (SELECT 1 FROM watch WHERE NOT ifnull(is_active, FALSE))",
-            [],
-            |row| {
-                let has_inactive: bool = row.get(0)?;
-                Ok(!has_inactive)
-            },
-        )?)
     }
 
     pub fn drop_stale_blocks(&self, chain: &Chain) -> Result<(), Error> {
@@ -220,7 +209,7 @@ impl Cache {
         Ok(())
     }
 
-    fn sync_headers<'a>(
+    fn add_headers<'a>(
         &self,
         entries: impl Iterator<Item = (usize, &'a index::Header)>,
     ) -> Result<usize, Error> {
@@ -238,7 +227,7 @@ impl Cache {
         Ok(rows)
     }
 
-    fn sync_transactions<'a>(
+    fn add_transactions<'a>(
         &self,
         locations: impl Iterator<Item = &'a Location<'a>>,
         index: &address::Index,
@@ -256,7 +245,7 @@ impl Cache {
         Ok(rows)
     }
 
-    fn sync_history<'a>(
+    fn add_history<'a>(
         &self,
         entries: impl Iterator<Item = (ScriptHash, Location<'a>)>,
     ) -> Result<usize, Error> {
@@ -326,13 +315,6 @@ impl Cache {
         Ok(rows)
     }
 
-    fn sync_watch(&self) -> Result<usize, Error> {
-        Ok(self
-            .db
-            .prepare("UPDATE watch SET is_active = TRUE")?
-            .execute([])?)
-    }
-
     fn last_indexed_header<'a>(
         &self,
         script_hash: &ScriptHash,
@@ -359,7 +341,7 @@ impl Cache {
     pub fn add(&self, addresses: impl IntoIterator<Item = bitcoin::Address>) -> Result<(), Error> {
         let mut insert = self
             .db
-            .prepare("INSERT OR IGNORE INTO watch VALUES (?1, ?2, ?3, NULL)")?;
+            .prepare("INSERT OR IGNORE INTO watch VALUES (?1, ?2, ?3)")?;
         let mut rows = 0;
         for addr in addresses {
             let script = addr.script_pubkey();
