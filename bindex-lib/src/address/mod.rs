@@ -1,4 +1,5 @@
 pub mod cache;
+mod schema;
 
 use std::{path::Path, time::Duration};
 
