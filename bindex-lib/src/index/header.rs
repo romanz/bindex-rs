@@ -3,7 +3,7 @@ use bitcoin::{consensus::Encodable as _, hashes::Hash as _, BlockHash};
 use crate::index::TxNum;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct Header {
+pub struct IndexedHeader {
     next_txnum: TxNum,
     hash: bitcoin::BlockHash,
     header: bitcoin::block::Header,
@@ -14,7 +14,7 @@ const BLOCK_HEADER_LEN: usize = bitcoin::block::Header::SIZE;
 
 type SerializedHeaderRow = ([u8; TxNum::LEN], [u8; BLOCK_HASH_LEN + BLOCK_HEADER_LEN]);
 
-impl Header {
+impl IndexedHeader {
     pub fn new(
         next_txnum: TxNum,
         hash: bitcoin::BlockHash,

@@ -155,7 +155,7 @@ impl Cache {
         let chain = index.chain();
         let from = self
             .last_indexed_header(script_hash, chain)?
-            .map_or(index::TxNum::default(), index::Header::next_txnum);
+            .map_or(index::TxNum::default(), index::IndexedHeader::next_txnum);
         index
             .locations_by_scripthash(script_hash, from)?
             .for_each(|loc| {
@@ -166,7 +166,7 @@ impl Cache {
 
     fn add_headers<'a>(
         &self,
-        entries: impl Iterator<Item = (usize, &'a index::Header)>,
+        entries: impl Iterator<Item = (usize, &'a index::IndexedHeader)>,
     ) -> Result<usize, Error> {
         let mut insert = self
             .db
@@ -274,7 +274,7 @@ impl Cache {
         &self,
         script_hash: &ScriptHash,
         chain: &'a Chain,
-    ) -> Result<Option<&'a index::Header>, Error> {
+    ) -> Result<Option<&'a index::IndexedHeader>, Error> {
         let mut stmt = self.db.prepare(
             r"
             SELECT block_hash, block_height
