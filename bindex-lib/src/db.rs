@@ -80,7 +80,7 @@ impl Store {
         let cf = self.cf(SCRIPT_HASH_CF);
         let mut scripthash_rows = vec![];
         for batch in batches {
-            scripthash_rows.extend(batch.scripthash_rows.iter().map(index::Row::key));
+            scripthash_rows.extend(batch.scripthash_rows.iter().map(index::HashPrefixRow::key));
         }
         scripthash_rows.sort_unstable();
         for row in scripthash_rows {
@@ -110,7 +110,7 @@ impl Store {
         let cf = self.cf(SCRIPT_HASH_CF);
         let mut scripthash_rows = vec![];
         for batch in batches {
-            scripthash_rows.extend(batch.scripthash_rows.iter().map(index::Row::key));
+            scripthash_rows.extend(batch.scripthash_rows.iter().map(index::HashPrefixRow::key));
         }
         // ScriptHashPrefixRow::key contains txnum, so it is safe to delete
         scripthash_rows.sort_unstable();
@@ -168,7 +168,7 @@ impl Store {
         let mut txnums = Vec::new();
 
         let hash_prefix = (*script_hash).into();
-        let start = index::Row::new(hash_prefix, from);
+        let start = index::HashPrefixRow::new(hash_prefix, from);
         // Allow resuming iteration from a specified txnum (for incremental sync)
         let mode = rocksdb::IteratorMode::From(start.key(), rocksdb::Direction::Forward);
         for kv in self.db.iterator_cf(cf, mode) {
@@ -176,7 +176,7 @@ impl Store {
             if !key.starts_with(hash_prefix.as_bytes()) {
                 break;
             }
-            let row = index::Row::from_bytes(key[..].try_into().unwrap());
+            let row = index::HashPrefixRow::from_bytes(key[..].try_into().unwrap());
             assert!(row.txnum() >= from);
             txnums.push(row.txnum());
         }
