@@ -190,6 +190,7 @@ impl Cache {
         Ok(history)
     }
 
+    /// Query index for new transactions, starting from last indexed block in cache.
     fn new_history_for_script_hash<'a>(
         &self,
         script_hash: &ScriptHash,
@@ -199,8 +200,7 @@ impl Cache {
         let chain = index.chain();
         let from = self
             .last_indexed_header(script_hash, chain)?
-            .map(index::Header::next_txnum)
-            .unwrap_or_default();
+            .map_or(index::TxNum::default(), index::Header::next_txnum);
         index
             .locations_by_scripthash(script_hash, from)?
             .for_each(|loc| {
