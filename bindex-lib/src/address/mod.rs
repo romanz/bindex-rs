@@ -54,7 +54,10 @@ impl Stats {
     }
 }
 
+/// Address index.
 impl Index {
+    /// Open an existing index, or create if missing.
+    /// Use binary format REST API for fetching the data from bitcoind.
     pub fn open(db_path: impl AsRef<Path>, url: impl Into<String>) -> Result<Self, Error> {
         let db_path = db_path.as_ref();
         let url = url.into();
@@ -67,13 +70,13 @@ impl Index {
         let client = client::Client::new(agent, url);
         let genesis_hash = client.get_blockhash_by_height(0)?;
 
-        // make sure bitcoind supports required REST endpoints
+        // make sure bitcoind supports the required REST API endpoints
         match client.get_spent_bytes(genesis_hash) {
             Err(client::Error::Http(ureq::Error::StatusCode(404))) => Err(Error::NotSupported)?,
             res => res?,
         };
         let dummy_txpos = index::TxBlockPos { offset: 0, size: 1 };
-        match client.get_tx_bytes_from_block(genesis_hash, dummy_txpos) {
+        match client.get_block_part(genesis_hash, dummy_txpos) {
             Err(client::Error::Http(ureq::Error::StatusCode(404))) => Err(Error::NotSupported)?,
             res => res?,
         };
@@ -208,7 +211,7 @@ impl Index {
         // Fetch the bytes from bitcoind
         Ok(self
             .client
-            .get_tx_bytes_from_block(location.indexed_header.hash(), pos)?)
+            .get_block_part(location.indexed_header.hash(), pos)?)
     }
 
     fn chain(&self) -> &Chain {

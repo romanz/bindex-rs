@@ -96,7 +96,8 @@ impl Client {
         Ok(index::SpentBytes::new(data))
     }
 
-    pub fn get_tx_bytes_from_block(
+    // Introduced in https://github.com/bitcoin/bitcoin/pull/33657
+    pub fn get_block_part(
         &self,
         hash: BlockHash,
         txpos: index::TxBlockPos,
