@@ -128,9 +128,23 @@ impl SpentBytes {
 }
 
 pub struct Batch {
-    pub script_hash_rows: Vec<Row>,
+    pub scripthash_rows: Vec<Row>,
     pub txpos_rows: Vec<txpos::TxBlockPosRow>,
     pub header: Header,
+}
+
+pub struct BlockIndex<R> {
+    next_txnum: TxNum,
+    rows: Vec<R>,
+}
+
+impl<R> BlockIndex<R> {
+    fn new(next_txnum: TxNum) -> Self {
+        Self {
+            next_txnum,
+            rows: vec![],
+        }
+    }
 }
 
 impl Batch {
@@ -140,20 +154,17 @@ impl Batch {
         block: &BlockBytes,
         spent: &SpentBytes,
     ) -> Result<Self, Error> {
-        let mut script_hash_rows = vec![];
-        let mut txpos_rows = vec![];
-        let txnum = {
-            let num1 = scripthash::add_block_rows(block, txnum, &mut script_hash_rows)?;
-            let num2 = scripthash::add_spent_rows(spent, txnum, &mut script_hash_rows)?;
-            assert_eq!(num1, num2); // both must have the same number of transactions
-            let num3 = txpos::add_txpos_rows(block, txnum, &mut txpos_rows)?;
-            assert_eq!(num1, num3); // both must have the same number of transactions
-            num1
-        };
+        let scripthash = scripthash::index(block, spent, txnum)?;
+        let txpos = txpos::index(block, txnum)?;
+
+        // Both must have the same number of transactions
+        assert_eq!(scripthash.next_txnum, txpos.next_txnum);
+        let txnum = txpos.next_txnum;
+
         let header = bitcoin::consensus::encode::deserialize(block.header())?;
         Ok(Batch {
-            script_hash_rows,
-            txpos_rows,
+            scripthash_rows: scripthash.rows,
+            txpos_rows: txpos.rows,
             header: Header::new(txnum, hash, header),
         })
     }

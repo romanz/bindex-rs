@@ -78,12 +78,12 @@ impl Store {
         let mut write_batch = rocksdb::WriteBatch::default();
 
         let cf = self.cf(SCRIPT_HASH_CF);
-        let mut script_hash_rows = vec![];
+        let mut scripthash_rows = vec![];
         for batch in batches {
-            script_hash_rows.extend(batch.script_hash_rows.iter().map(index::Row::key));
+            scripthash_rows.extend(batch.scripthash_rows.iter().map(index::Row::key));
         }
-        script_hash_rows.sort_unstable();
-        for row in script_hash_rows {
+        scripthash_rows.sort_unstable();
+        for row in scripthash_rows {
             write_batch.put_cf(cf, row, b"");
         }
 
@@ -108,13 +108,13 @@ impl Store {
     pub fn delete(&self, batches: &[index::Batch]) -> Result<(), rocksdb::Error> {
         let mut write_batch = rocksdb::WriteBatch::default();
         let cf = self.cf(SCRIPT_HASH_CF);
-        let mut script_hash_rows = vec![];
+        let mut scripthash_rows = vec![];
         for batch in batches {
-            script_hash_rows.extend(batch.script_hash_rows.iter().map(index::Row::key));
+            scripthash_rows.extend(batch.scripthash_rows.iter().map(index::Row::key));
         }
         // ScriptHashPrefixRow::key contains txnum, so it is safe to delete
-        script_hash_rows.sort_unstable();
-        for row in script_hash_rows {
+        scripthash_rows.sort_unstable();
+        for row in scripthash_rows {
             write_batch.delete_cf(cf, row);
         }
 

@@ -1,6 +1,6 @@
 use std::ops::ControlFlow;
 
-use super::{BlockBytes, Error, TxNum};
+use super::{BlockBytes, BlockIndex, Error, TxNum};
 use bitcoin::consensus::{Decodable, Encodable};
 use bitcoin_slices::{bsl, Visit as _};
 
@@ -194,20 +194,17 @@ impl bitcoin_slices::Visitor for TxPosVisitor<'_> {
     }
 }
 
-pub fn add_txpos_rows(
-    block: &BlockBytes,
-    tx_num: TxNum,
-    txpos_rows: &mut Vec<TxBlockPosRow>,
-) -> Result<TxNum, Error> {
+pub fn index(block: &BlockBytes, txnum: TxNum) -> Result<BlockIndex<TxBlockPosRow>, Error> {
     let mut positions = vec![];
-    let mut visitor = TxPosVisitor::new(&mut positions, tx_num);
+    let mut visitor = TxPosVisitor::new(&mut positions, txnum);
     let res = bsl::Block::visit(&block.0, &mut visitor).map_err(Error::Parse)?;
     if !res.remaining().is_empty() {
         return Err(Error::Leftover(res.remaining().len()));
     }
-    let next_txnum = visitor.tx_num;
-    *txpos_rows = TxBlockPosRow::chunkify(&positions);
-    Ok(next_txnum)
+    Ok(BlockIndex {
+        next_txnum: visitor.tx_num,
+        rows: TxBlockPosRow::chunkify(&positions),
+    })
 }
 
 #[cfg(test)]

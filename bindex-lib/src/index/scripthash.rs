@@ -3,7 +3,7 @@ use std::ops::ControlFlow;
 use bitcoin::hashes::Hash;
 use bitcoin_slices::{bsl, Parse, Visit};
 
-use crate::index::{BlockBytes, Error, Prefix, Row, SpentBytes, TxNum};
+use crate::index::{BlockBytes, BlockIndex, Error, Prefix, Row, SpentBytes, TxNum};
 
 bitcoin::hashes::hash_newtype! {
     /// https://electrumx-spesmilo.readthedocs.io/en/latest/protocol-basics.html#script-hashes
@@ -85,11 +85,7 @@ fn visit_spent<'a>(
     Ok(bitcoin_slices::ParseResult::new(&slice[consumed..], Spent))
 }
 
-pub fn add_block_rows(
-    block: &BlockBytes,
-    txnum: TxNum,
-    rows: &mut Vec<Row>,
-) -> Result<TxNum, Error> {
+fn add_block_rows(block: &BlockBytes, txnum: TxNum, rows: &mut Vec<Row>) -> Result<TxNum, Error> {
     let mut visitor = IndexVisitor::new(txnum, rows);
     let res = bsl::Block::visit(&block.0, &mut visitor).map_err(Error::Parse)?;
     if !res.remaining().is_empty() {
@@ -98,17 +94,26 @@ pub fn add_block_rows(
     Ok(visitor.txnum)
 }
 
-pub fn add_spent_rows(
-    spent: &SpentBytes,
-    txnum: TxNum,
-    rows: &mut Vec<Row>,
-) -> Result<TxNum, Error> {
+fn add_spent_rows(spent: &SpentBytes, txnum: TxNum, rows: &mut Vec<Row>) -> Result<TxNum, Error> {
     let mut visitor = IndexVisitor::new(txnum, rows);
     let res = visit_spent(&spent.0, &mut visitor).map_err(Error::Parse)?;
     if !res.remaining().is_empty() {
         return Err(Error::Leftover(res.remaining().len()));
     }
     Ok(visitor.txnum)
+}
+
+pub fn index(
+    block: &BlockBytes,
+    spent: &SpentBytes,
+    txnum: TxNum,
+) -> Result<BlockIndex<Row>, Error> {
+    let mut result = BlockIndex::new(txnum);
+    let txnum1 = add_block_rows(block, txnum, &mut result.rows)?;
+    let txnum2 = add_spent_rows(spent, txnum, &mut result.rows)?;
+    assert_eq!(txnum1, txnum2);
+    result.next_txnum = txnum1;
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -176,7 +181,7 @@ mod tests {
 
         assert_eq!(batch.header.next_txnum(), TxNum(14));
         assert_eq!(batch.header.hash(), block.block_hash());
-        assert_eq!(batch.script_hash_rows, [block_rows, spent_rows].concat());
+        assert_eq!(batch.scripthash_rows, [block_rows, spent_rows].concat());
 
         Ok(())
     }
