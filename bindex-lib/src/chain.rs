@@ -12,11 +12,11 @@ pub enum Reorg {
 }
 
 pub struct Chain {
-    rows: Vec<index::Header>,
+    rows: Vec<index::IndexedHeader>,
 }
 
 impl Chain {
-    pub fn new(rows: Vec<index::Header>) -> Self {
+    pub fn new(rows: Vec<index::IndexedHeader>) -> Self {
         let mut block_hash = bitcoin::BlockHash::all_zeros();
         for row in &rows {
             assert_eq!(row.header().prev_blockhash, block_hash);
@@ -26,7 +26,7 @@ impl Chain {
     }
 
     pub fn tip_hash(&self) -> Option<bitcoin::BlockHash> {
-        self.rows.last().map(index::Header::hash)
+        self.rows.last().map(index::IndexedHeader::hash)
     }
 
     pub fn tip_height(&self) -> Option<usize> {
@@ -36,10 +36,10 @@ impl Chain {
     pub fn next_txnum(&self) -> index::TxNum {
         self.rows
             .last()
-            .map_or_else(index::TxNum::default, index::Header::next_txnum)
+            .map_or_else(index::TxNum::default, index::IndexedHeader::next_txnum)
     }
 
-    pub fn add(&mut self, row: index::Header) {
+    pub fn add(&mut self, row: index::IndexedHeader) {
         assert_eq!(
             row.header().prev_blockhash,
             self.tip_hash().unwrap_or_else(BlockHash::all_zeros)
@@ -47,15 +47,19 @@ impl Chain {
         self.rows.push(row)
     }
 
-    pub fn pop(&mut self) -> Option<index::Header> {
+    pub fn pop(&mut self) -> Option<index::IndexedHeader> {
         self.rows.pop()
     }
 
-    pub fn genesis(&self) -> Option<&index::Header> {
+    pub fn genesis(&self) -> Option<&index::IndexedHeader> {
         self.rows.first()
     }
 
-    pub fn get_header(&self, hash: BlockHash, height: usize) -> Result<&index::Header, Reorg> {
+    pub fn get_header(
+        &self,
+        hash: BlockHash,
+        height: usize,
+    ) -> Result<&index::IndexedHeader, Reorg> {
         let header = self.rows.get(height).ok_or(Reorg::Missing(hash, height))?;
         if header.hash() == hash {
             Ok(header)
@@ -67,7 +71,7 @@ impl Chain {
     pub fn find_by_txnum(&self, txnum: index::TxNum) -> Option<Location<'_>> {
         let height = match self
             .rows
-            .binary_search_by_key(&txnum, index::Header::next_txnum)
+            .binary_search_by_key(&txnum, index::IndexedHeader::next_txnum)
         {
             Ok(i) => i + 1, // hitting exactly a block boundary txnum -> next block
             Err(i) => i,
@@ -82,7 +86,7 @@ impl Chain {
         let prev_txnum = self
             .rows
             .get(height - 1)
-            .map_or_else(index::TxNum::default, index::Header::next_txnum);
+            .map_or_else(index::TxNum::default, index::IndexedHeader::next_txnum);
 
         assert!(
             txnum >= prev_txnum,
@@ -103,7 +107,7 @@ pub struct Location<'a> {
     pub txnum: index::TxNum, // tx number (position within the chain)
     pub height: usize,       // block height
     pub offset: u32,         // tx position within its block
-    pub indexed_header: &'a index::Header,
+    pub indexed_header: &'a index::IndexedHeader,
 }
 
 impl Ord for Location<'_> {

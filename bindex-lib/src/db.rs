@@ -202,12 +202,12 @@ impl Store {
     }
 
     /// Load all headers from DB.
-    pub fn headers(&self) -> Result<Vec<index::Header>, rocksdb::Error> {
+    pub fn headers(&self) -> Result<Vec<index::IndexedHeader>, rocksdb::Error> {
         let cf = self.cf(HEADERS_CF);
         let mut result = vec![];
         for kv in self.db.iterator_cf(cf, rocksdb::IteratorMode::Start) {
             let (key, value) = kv?;
-            let row = index::Header::deserialize((
+            let row = index::IndexedHeader::deserialize((
                 key[..].try_into().unwrap(),
                 value[..].try_into().unwrap(),
             ));

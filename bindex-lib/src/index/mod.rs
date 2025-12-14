@@ -6,7 +6,7 @@ use bitcoin::{hashes::Hash, BlockHash};
 
 use crate::chain::Chain;
 
-pub use header::Header;
+pub use header::IndexedHeader;
 pub use scripthash::ScriptHash;
 pub use txpos::{TxBlockPos, TxBlockPosRow};
 
@@ -130,7 +130,7 @@ impl SpentBytes {
 pub struct Batch {
     pub scripthash_rows: Vec<HashPrefixRow>,
     pub txpos_rows: Vec<txpos::TxBlockPosRow>,
-    pub header: Header,
+    pub header: IndexedHeader,
 }
 
 pub struct BlockIndex<R> {
@@ -165,7 +165,7 @@ impl Batch {
         Ok(Batch {
             scripthash_rows: scripthash.rows,
             txpos_rows: txpos.rows,
-            header: Header::new(txnum, hash, header),
+            header: IndexedHeader::new(txnum, hash, header),
         })
     }
 }
