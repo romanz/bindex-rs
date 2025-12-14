@@ -170,13 +170,13 @@ impl Batch {
     }
 }
 
-pub struct Builder {
+pub struct IndexBuilder {
     batches: Vec<Batch>,
     next_txnum: TxNum,
     tip: bitcoin::BlockHash,
 }
 
-impl Builder {
+impl IndexBuilder {
     pub fn new(chain: &Chain) -> Self {
         Self {
             next_txnum: chain.next_txnum(),
@@ -187,7 +187,7 @@ impl Builder {
         }
     }
 
-    pub fn index(
+    pub fn add(
         &mut self,
         hash: bitcoin::BlockHash,
         block_bytes: &BlockBytes,
