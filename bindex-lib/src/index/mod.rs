@@ -1,8 +1,12 @@
 mod header;
 mod scripthash;
+mod txid;
 mod txpos;
 
-use bitcoin::{hashes::Hash, BlockHash};
+use bitcoin::{
+    hashes::{sha256d, Hash},
+    BlockHash,
+};
 
 use crate::chain::Chain;
 
@@ -41,6 +45,13 @@ impl Prefix {
 
 impl From<ScriptHash> for Prefix {
     fn from(value: ScriptHash) -> Self {
+        Self::new(&value[..])
+    }
+}
+
+// Used for Txid prefix extraction
+impl From<sha256d::Hash> for Prefix {
+    fn from(value: sha256d::Hash) -> Self {
         Self::new(&value[..])
     }
 }
@@ -133,6 +144,7 @@ impl SpentBytes {
 
 pub struct Batch {
     pub scripthash_rows: Vec<HashPrefixRow>,
+    pub txid_rows: Vec<HashPrefixRow>,
     pub txpos_rows: Vec<txpos::TxBlockPosRow>,
     pub header: IndexedHeader,
 }
@@ -160,6 +172,7 @@ impl Batch {
     ) -> Result<Self, Error> {
         let scripthash = scripthash::index(block, spent, txnum)?;
         let txpos = txpos::index(block, txnum)?;
+        let txid = txid::index(block, txnum)?;
 
         // Both must have the same number of transactions
         assert_eq!(scripthash.next_txnum, txpos.next_txnum);
@@ -169,6 +182,7 @@ impl Batch {
         Ok(Batch {
             scripthash_rows: scripthash.rows,
             txpos_rows: txpos.rows,
+            txid_rows: txid.rows,
             header: IndexedHeader::new(txnum, hash, header),
         })
     }
