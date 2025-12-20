@@ -72,12 +72,16 @@ impl Store {
             .unwrap_or_else(|| panic!("missing CF: {name}"))
     }
 
-    pub fn write(&self, batches: &[index::Batch]) -> Result<(), rocksdb::Error> {
+    fn apply_batch<F>(&self, f: F, batches: &[index::Batch]) -> Result<(), rocksdb::Error>
+    where
+        F: Fn(&mut rocksdb::WriteBatch, &rocksdb::ColumnFamily, &[u8], &[u8]),
+    {
         if batches.is_empty() {
             return Ok(());
         }
         let mut write_batch = rocksdb::WriteBatch::default();
 
+        // key = scripthash prefix || matching txnum, value = b""
         let cf = self.cf(SCRIPT_HASH_CF);
         let mut scripthash_rows = vec![];
         for batch in batches {
@@ -85,9 +89,10 @@ impl Store {
         }
         scripthash_rows.sort_unstable();
         for row in scripthash_rows {
-            write_batch.put_cf(cf, row, b"");
+            f(&mut write_batch, cf, row, b"");
         }
 
+        // key = txid prefix || matching txnum, value = b""
         let cf = self.cf(TXID_CF);
         let mut txid_rows = vec![];
         for batch in batches {
@@ -95,20 +100,23 @@ impl Store {
         }
         txid_rows.sort_unstable();
         for row in txid_rows {
-            write_batch.put_cf(cf, row, b"");
+            f(&mut write_batch, cf, row, b"");
         }
 
+        // key = last_txnum, value = chunk of offsets
         let cf = self.cf(TXPOS_CF);
+        // Rows are sorted by `txnum`.
         batches
             .iter()
             .flat_map(|batch| batch.txpos_rows.iter())
             .map(index::TxBlockPosRow::serialize)
-            .for_each(|(k, v)| write_batch.put_cf(cf, k, v));
+            .for_each(|(k, v)| f(&mut write_batch, cf, &k, &v));
 
+        // key = next_txnum, value = blockhash || blockheader
         let cf = self.cf(HEADERS_CF);
         for batch in batches {
             let (key, value) = batch.header.serialize();
-            write_batch.put_cf(cf, key, value);
+            f(&mut write_batch, cf, &key, &value);
         }
 
         let opts = rocksdb::WriteOptions::default();
@@ -116,47 +124,13 @@ impl Store {
         Ok(())
     }
 
+    pub fn write(&self, batches: &[index::Batch]) -> Result<(), rocksdb::Error> {
+        self.apply_batch(|wb, cf, k, v| wb.put_cf(cf, k, v), batches)
+    }
+
     pub fn delete(&self, batches: &[index::Batch]) -> Result<(), rocksdb::Error> {
-        let mut write_batch = rocksdb::WriteBatch::default();
-        let cf = self.cf(SCRIPT_HASH_CF);
-        let mut scripthash_rows = vec![];
-        for batch in batches {
-            scripthash_rows.extend(batch.scripthash_rows.iter().map(index::HashPrefixRow::key));
-        }
-        // ScriptHashPrefixRow::key contains txnum, so it is safe to delete
-        scripthash_rows.sort_unstable();
-        for row in scripthash_rows {
-            write_batch.delete_cf(cf, row);
-        }
-
-        let cf = self.cf(TXID_CF);
-        let mut txid_rows = vec![];
-        for batch in batches {
-            txid_rows.extend(batch.txid_rows.iter().map(index::HashPrefixRow::key));
-        }
-        // Row::key contains txnum, so it is safe to delete
-        txid_rows.sort_unstable();
-        for row in txid_rows {
-            write_batch.delete_cf(cf, row);
-        }
-
-        let cf = self.cf(TXPOS_CF);
-        batches
-            .iter()
-            .flat_map(|batch| batch.txpos_rows.iter())
-            .map(index::TxBlockPosRow::serialize)
-            .for_each(|(k, _v)| write_batch.delete_cf(cf, k));
-
-        let cf = self.cf(HEADERS_CF);
-        // index::Header key is next_txnum, so it is safe to delete
-        for batch in batches {
-            let (key, _value) = batch.header.serialize();
-            write_batch.delete_cf(cf, key);
-        }
-
-        let opts = rocksdb::WriteOptions::default();
-        self.db.write_opt(write_batch, &opts)?;
-        Ok(())
+        // All keys contains txnum, so they are safe to delete in case of a reorg.
+        self.apply_batch(|wb, cf, k, _v| wb.delete_cf(cf, k), batches)
     }
 
     pub fn flush(&self) -> Result<(), rocksdb::Error> {
