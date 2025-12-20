@@ -32,8 +32,9 @@ fn default_opts() -> rocksdb::Options {
 const HEADERS_CF: &str = "headers";
 const SCRIPT_HASH_CF: &str = "script_hash";
 const TXPOS_CF: &str = "txpos";
+const TXID_CF: &str = "txid";
 
-const COLUMN_FAMILIES: &[&str] = &[HEADERS_CF, TXPOS_CF, SCRIPT_HASH_CF];
+const COLUMN_FAMILIES: &[&str] = &[HEADERS_CF, TXPOS_CF, TXID_CF, SCRIPT_HASH_CF];
 
 fn cf_descriptors(
     opts: &rocksdb::Options,
@@ -87,6 +88,16 @@ impl Store {
             write_batch.put_cf(cf, row, b"");
         }
 
+        let cf = self.cf(TXID_CF);
+        let mut txid_rows = vec![];
+        for batch in batches {
+            txid_rows.extend(batch.txid_rows.iter().map(index::HashPrefixRow::key));
+        }
+        txid_rows.sort_unstable();
+        for row in txid_rows {
+            write_batch.put_cf(cf, row, b"");
+        }
+
         let cf = self.cf(TXPOS_CF);
         batches
             .iter()
@@ -115,6 +126,17 @@ impl Store {
         // ScriptHashPrefixRow::key contains txnum, so it is safe to delete
         scripthash_rows.sort_unstable();
         for row in scripthash_rows {
+            write_batch.delete_cf(cf, row);
+        }
+
+        let cf = self.cf(TXID_CF);
+        let mut txid_rows = vec![];
+        for batch in batches {
+            txid_rows.extend(batch.txid_rows.iter().map(index::HashPrefixRow::key));
+        }
+        // Row::key contains txnum, so it is safe to delete
+        txid_rows.sort_unstable();
+        for row in txid_rows {
             write_batch.delete_cf(cf, row);
         }
 
