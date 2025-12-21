@@ -4,7 +4,7 @@ use std::{path::Path, time::Duration};
 use bitcoin::{
     consensus::{deserialize, serialize},
     hashes::Hash,
-    BlockHash, Txid,
+    Txid,
 };
 use bitcoin_slices::{bsl, Parse};
 use log::*;
@@ -288,14 +288,9 @@ impl Cache {
     }
 
     /// Synchornize index with current bitcoind state.
-    /// Return `true` iff the chain tip has been updated.
-    pub fn sync(&self, index: &IndexedChain, tip: &mut BlockHash) -> Result<bool, Error> {
+    pub fn sync(&self, index: &IndexedChain) -> Result<(), Error> {
         self.run("sync", || {
             self.drop_stale_blocks(&index.chain)?;
-            let new_tip = index.chain.tip_hash();
-            if *tip == new_tip {
-                return Ok(false);
-            }
             let new_history = self.new_history(index)?;
             let new_locations: BTreeSet<_> = new_history.iter().map(|(_, loc)| loc).collect();
             let new_headers: BTreeSet<_> = new_locations
@@ -315,8 +310,7 @@ impl Cache {
             self.add_headers(new_headers.into_iter())?;
             self.add_transactions(new_locations.into_iter(), index)?;
             self.add_history(new_history.into_iter())?;
-            *tip = new_tip;
-            Ok(true)
+            Ok(())
         })
     }
 

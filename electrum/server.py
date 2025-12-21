@@ -866,11 +866,14 @@ class Indexer:
         line = await self._loop.run_in_executor(None, sys.stdin.readline)
         return line.strip()
 
-    async def _notify_bindex(self):
+    async def _notify_bindex(self, force: bool = False):
         """Notify `bindex` to run another indexing iteration."""
 
         def write_fn():
-            sys.stdout.write("\n")
+            tip = self.tip
+            if force:
+                tip = ""
+            sys.stdout.write(f"{tip}\n")
             sys.stdout.flush()
 
         await self._loop.run_in_executor(None, write_fn)
@@ -882,9 +885,10 @@ class Indexer:
         LOG.info("indexer at block=%r", i.tip)
         return i
 
-    async def sync(self) -> bool:
+    async def sync(self, force: bool = False) -> bool:
         prev_tip = self.tip
-        await self._notify_bindex()  # update `bindex` (start an indexing iteration)
+        # update `bindex` (start an indexing iteration)
+        await self._notify_bindex(force=force)
         self.tip = await self._read_tip()  # wait for the indexing iteration to finish
         LOG.debug("indexer at block=%r", self.tip)
         return prev_tip != self.tip
@@ -898,7 +902,7 @@ async def subscription_task(mgr: Manager, indexer: Indexer):
             update_scripthashes(mgr.db.cursor(), data=[[i] for i, _ in reqs])
 
             # update `bindex`
-            chain_updated = await indexer.sync()
+            chain_updated = await indexer.sync(force=bool(reqs))
 
             # update mempool via ZMQ notifications (or resync, if needed)
             mempool_update = await mgr.mempool.update()

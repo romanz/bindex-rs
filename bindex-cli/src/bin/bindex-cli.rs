@@ -242,10 +242,15 @@ impl Electrum {
         Ok(())
     }
 
-    fn wait(&mut self) -> Result<()> {
+    fn wait(&mut self) -> Result<BlockHash> {
         self.line.clear();
         self.stdout.read_line(&mut self.line)?; // wait for notification
-        Ok(())
+        let s = self.line.trim();
+        Ok(if s.is_empty() {
+            BlockHash::all_zeros()
+        } else {
+            BlockHash::from_str(s)?
+        })
     }
 }
 
@@ -270,8 +275,15 @@ fn run() -> Result<()> {
     let mut index = cache::IndexedChain::open_default(&args.db_path, args.network)?;
     let mut tip = BlockHash::all_zeros();
     loop {
-        while index.sync_chain(1000)?.indexed_blocks > 0 {}
-        if cache.sync(&index, &mut tip)? {
+        let new_tip = loop {
+            let stats = index.sync_chain(1000)?;
+            if stats.indexed_blocks == 0 {
+                break stats.tip;
+            }
+        };
+        if tip != new_tip {
+            tip = new_tip;
+            cache.sync(&index)?;
             let entries = get_history(cache.db())?;
             print_history(entries, args.history_limit);
         }
@@ -281,7 +293,7 @@ fn run() -> Result<()> {
         match server.as_mut() {
             Some(s) => {
                 s.notify(tip)?;
-                s.wait()?; // Electrum should send an ACK for an index sync request
+                tip = s.wait()?; // Electrum should send an ACK for an index sync request
             }
             None => thread::sleep(std::time::Duration::from_secs(1)),
         }
