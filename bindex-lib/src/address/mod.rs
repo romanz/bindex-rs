@@ -197,9 +197,20 @@ impl Index {
         script_hash: &index::ScriptHash,
         from: index::TxNum,
     ) -> Result<impl Iterator<Item = Location<'_>>, Error> {
-        Ok(self
-            .store
-            .scan_by_script_hash(script_hash, from)?
+        let txnums = self.store.scan_by_script_hash(script_hash, from)?;
+        Ok(txnums
+            .into_iter()
+            // chain and store must be in sync
+            .map(|txnum| self.chain.find_by_txnum(txnum).expect("invalid txnum")))
+    }
+
+    #[allow(dead_code)]
+    fn locations_by_txid(
+        &self,
+        txid: &bitcoin::Txid,
+    ) -> Result<impl Iterator<Item = Location<'_>>, Error> {
+        let txnums = self.store.scan_by_txid(txid)?;
+        Ok(txnums
             .into_iter()
             // chain and store must be in sync
             .map(|txnum| self.chain.find_by_txnum(txnum).expect("invalid txnum")))

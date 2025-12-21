@@ -179,6 +179,26 @@ impl Store {
         Ok(txnums)
     }
 
+    /// Collect a list of `TxNum`s for specified `txid`.
+    #[allow(dead_code)]
+    pub fn scan_by_txid(&self, txid: &bitcoin::Txid) -> Result<Vec<index::TxNum>, rocksdb::Error> {
+        let cf = self.cf(TXID_CF);
+        let mut txnums = Vec::new();
+
+        let hash_prefix = (*txid.as_raw_hash()).into();
+        let start = index::HashPrefixRow::new(hash_prefix, index::TxNum::default());
+        let mode = rocksdb::IteratorMode::From(start.key(), rocksdb::Direction::Forward);
+        for kv in self.db.iterator_cf(cf, mode) {
+            let (key, _) = kv?;
+            if !key.starts_with(hash_prefix.as_bytes()) {
+                break;
+            }
+            let row = index::HashPrefixRow::from_bytes(key[..].try_into().unwrap());
+            txnums.push(row.txnum());
+        }
+        Ok(txnums)
+    }
+
     /// Lookup transaction position (offset & size) within its block.
     pub fn get_tx_block_pos(
         &self,
