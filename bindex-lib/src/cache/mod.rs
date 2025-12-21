@@ -45,7 +45,7 @@ pub enum Error {
     BlockNotFound(#[from] chain::Reorg),
 }
 
-pub struct Index {
+pub struct IndexedChain {
     genesis_hash: bitcoin::BlockHash,
     chain: chain::Chain,
     client: client::Client,
@@ -70,9 +70,8 @@ impl Stats {
     }
 }
 
-/// Address index.
-impl Index {
-    /// Open an existing index, or create if missing.
+impl IndexedChain {
+    /// Open an existing DB, or create if missing.
     /// Use binary format REST API for fetching the data from bitcoind.
     pub fn open(db_path: impl AsRef<Path>, url: impl Into<String>) -> Result<Self, Error> {
         let db_path = db_path.as_ref();
@@ -111,7 +110,7 @@ impl Index {
                 chain.tip_height().unwrap(),
             );
         }
-        Ok(Index {
+        Ok(IndexedChain {
             genesis_hash,
             chain,
             client,
@@ -287,7 +286,7 @@ impl Cache {
 
     /// Synchornize index with current bitcoind state.
     /// Return `true` iff the chain tip has been updated.
-    pub fn sync(&self, index: &Index, tip: &mut BlockHash) -> Result<bool, Error> {
+    pub fn sync(&self, index: &IndexedChain, tip: &mut BlockHash) -> Result<bool, Error> {
         self.run("sync", || {
             self.drop_stale_blocks(&index.chain)?;
             let new_tip = index.chain.tip_hash();
@@ -318,7 +317,7 @@ impl Cache {
         })
     }
 
-    pub fn drop_stale_blocks(&self, chain: &Chain) -> Result<(), Error> {
+    fn drop_stale_blocks(&self, chain: &Chain) -> Result<(), Error> {
         let mut select = self
             .db
             .prepare("SELECT block_hash, block_height FROM headers ORDER BY block_height DESC")?;
@@ -349,7 +348,7 @@ impl Cache {
 
     fn new_history<'a>(
         &self,
-        index: &'a Index,
+        index: &'a IndexedChain,
     ) -> Result<BTreeSet<(ScriptHash, Location<'a>)>, Error> {
         let mut stmt = self.db.prepare("SELECT script_hash FROM watch")?;
         let results = stmt.query_map((), |row| Ok(ScriptHash::from_byte_array(row.get(0)?)))?;
@@ -366,7 +365,7 @@ impl Cache {
     fn new_history_for_script_hash<'a>(
         &self,
         script_hash: &ScriptHash,
-        index: &'a Index,
+        index: &'a IndexedChain,
         history: &mut BTreeSet<(ScriptHash, Location<'a>)>,
     ) -> Result<(), Error> {
         let chain = index.chain();
@@ -402,7 +401,7 @@ impl Cache {
     fn add_transactions<'a>(
         &self,
         locations: impl Iterator<Item = &'a Location<'a>>,
-        index: &Index,
+        index: &IndexedChain,
     ) -> Result<usize, Error> {
         let mut insert = self
             .db

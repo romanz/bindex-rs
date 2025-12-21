@@ -267,7 +267,7 @@ fn run() -> Result<()> {
             .ok_or("Electrum requires setting a cache file")?;
         server = Some(Electrum::start(&cache_file, args.network.into())?);
     }
-    let mut index = cache::Index::open_default(&args.db_path, args.network)?;
+    let mut index = cache::IndexedChain::open_default(&args.db_path, args.network)?;
     let mut tip = BlockHash::all_zeros();
     loop {
         while index.sync_chain(1000)?.indexed_blocks > 0 {}
