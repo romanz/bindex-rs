@@ -305,7 +305,7 @@ class Mempool:
                 assert mempool_seq is not None
                 messages.append((event, hash_hex, mempool_seq))
 
-        if self.next_seq is None:
+        if self.next_seq is None and ZMQ_ADDR:
             # We are out of sync - resync mempool transactions (using REST API)
             await self.resync(scripthashes=result.scripthashes)
 
