@@ -213,11 +213,14 @@ struct Electrum {
 }
 
 impl Electrum {
-    fn start(cache_file: &Path) -> Result<Self> {
+    fn start(cache_file: &Path, network: bitcoin::Network) -> Result<Self> {
         let mut server = Command::new("python")
             .arg("-m")
             .arg("electrum.server")
+            .arg("--cache-db")
             .arg(cache_file)
+            .arg("--network")
+            .arg(network.to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()?;
@@ -263,7 +266,7 @@ fn run() -> Result<()> {
         let cache_file = args
             .cache_file
             .ok_or("Electrum requires setting a cache file")?;
-        server = Some(Electrum::start(&cache_file)?);
+        server = Some(Electrum::start(&cache_file, args.network.into())?);
     }
     let mut index = address::Index::open_default(&args.db_path, args.network)?;
     let mut tip = BlockHash::all_zeros();

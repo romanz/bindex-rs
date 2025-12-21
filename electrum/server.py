@@ -8,6 +8,7 @@
 """Classes for local RPC server and remote client TCP/SSL servers."""
 
 import aiohttp
+import argparse
 import asyncio
 import base64
 import functools
@@ -48,7 +49,15 @@ DAEMON_ERROR = 2
 
 MAX_CHUNK_SIZE = 2016
 
-(CACHE_DB,) = sys.argv[1:]
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-c", "--cache-db")
+    parser.add_argument("-n", "--network", default="bitcoin")
+    return parser.parse_args()
+
+
+ARGS = parse_args()
 
 
 class Env:
@@ -64,9 +73,15 @@ HOST = os.environ.get("ELECTRUM_HOST", "localhost")
 PORT = int(os.environ.get("ELECTRUM_PORT", 50001))
 ZMQ_ADDR = os.environ.get("ZMQ_ADDR")
 
-BITCOIND_URL = os.environ.get("BITCOIND_URL", "http://localhost:8332")
+(DEFAULT_PORT, DEFAULT_DIR) = {
+    "bitcoin": (8332, "~/.bitcoin"),
+    "signet": (38332, "~/.bitcoin/signet"),
+    "testnet4": (48332, "~/.bitcoin/testnet4"),
+}[ARGS.network]
+
+BITCOIND_URL = os.environ.get("BITCOIND_URL", f"http://localhost:{DEFAULT_PORT}")
 BITCOIND_COOKIE_PATH = Path(
-    os.environ.get("BITCOIND_COOKIE_PATH", "~/.bitcoin/.cookie")
+    os.environ.get("BITCOIND_COOKIE_PATH", f"{DEFAULT_DIR}/.cookie")
 ).expanduser()
 
 
@@ -346,7 +361,7 @@ class Mempool:
 
 class Manager:
     def __init__(self, http: HttpClient):
-        self.db = sqlite3.connect(CACHE_DB)
+        self.db = sqlite3.connect(ARGS.cache_db)
         self.merkle = merkle.Merkle()
         self.subscription_queue = asyncio.Queue()
         self.mempool = Mempool(http)
