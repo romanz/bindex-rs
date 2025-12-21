@@ -102,7 +102,7 @@ impl Chain {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Clone, Copy)]
+#[derive(PartialEq, Eq, PartialOrd, Clone, Copy, Debug)]
 pub struct Location<'a> {
     pub txnum: index::TxNum, // tx number (position within the chain)
     pub height: usize,       // block height
