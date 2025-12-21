@@ -20,3 +20,15 @@ impl From<Network> for bitcoin::Network {
         }
     }
 }
+
+impl Network {
+    pub fn default_rpc_port(&self) -> u16 {
+        match self {
+            Network::Bitcoin => 8332,
+            Network::Testnet => 18332,
+            Network::Testnet4 => 48332,
+            Network::Signet => 38332,
+            Network::Regtest => 18443,
+        }
+    }
+}

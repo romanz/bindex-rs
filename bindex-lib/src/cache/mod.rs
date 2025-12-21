@@ -122,14 +122,7 @@ impl Index {
     pub fn open_default(db_path: &str, network: cli::Network) -> Result<Self, Error> {
         let bitcoin_network: bitcoin::Network = network.into();
         let default_db_path = format!("{db_path}/{bitcoin_network}");
-        let default_rpc_port = match network {
-            cli::Network::Bitcoin => 8332,
-            cli::Network::Testnet => 18332,
-            cli::Network::Testnet4 => 48332,
-            cli::Network::Signet => 38332,
-            cli::Network::Regtest => 18443,
-        };
-        let default_rest_url = format!("http://localhost:{default_rpc_port}");
+        let default_rest_url = format!("http://localhost:{}", network.default_rpc_port());
         Self::open(default_db_path, default_rest_url)
     }
 
