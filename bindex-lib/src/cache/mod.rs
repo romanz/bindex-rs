@@ -1,5 +1,3 @@
-mod schema;
-
 use std::{collections::BTreeSet, fmt::Debug};
 use std::{path::Path, time::Duration};
 
@@ -278,8 +276,13 @@ impl Cache {
     }
 
     fn create_tables(&self) -> Result<(), Error> {
-        for sql in schema::CREATE_TABLE {
-            self.db.execute(sql, ())?;
+        // Split by ';' and drop empty entries
+        let statements = include_str!("schema.sql")
+            .split(";")
+            .map(str::trim)
+            .filter(|s| !str::is_empty(s));
+        for s in statements {
+            self.db.execute(s, ())?;
         }
         Ok(())
     }
