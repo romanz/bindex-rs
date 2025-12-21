@@ -111,6 +111,7 @@ impl HashPrefixRow {
     }
 }
 
+#[derive(PartialEq, Eq, Debug)]
 pub struct BlockBytes(Vec<u8>);
 
 impl BlockBytes {

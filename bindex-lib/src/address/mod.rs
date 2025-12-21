@@ -69,16 +69,18 @@ impl Index {
         );
         let client = client::Client::new(agent, url);
         let genesis_hash = client.get_blockhash_by_height(0)?;
+        let genesis_block = client.get_block_bytes(genesis_hash)?;
 
         // make sure bitcoind supports the required REST API endpoints
         match client.get_spent_bytes(genesis_hash) {
             Err(client::Error::Http(ureq::Error::StatusCode(404))) => Err(Error::NotSupported)?,
             res => res?,
         };
-        let dummy_txpos = index::TxBlockPos { offset: 0, size: 1 };
-        match client.get_block_part(genesis_hash, dummy_txpos) {
+        let size = genesis_block.len().try_into().unwrap();
+        let txpos = index::TxBlockPos { offset: 0, size };
+        match client.get_block_part(genesis_hash, txpos) {
             Err(client::Error::Http(ureq::Error::StatusCode(404))) => Err(Error::NotSupported)?,
-            res => res?,
+            res => assert_eq!(index::BlockBytes::new(res?), genesis_block),
         };
 
         let store = db::Store::open(db_path)?;
