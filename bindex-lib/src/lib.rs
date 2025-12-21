@@ -1,4 +1,4 @@
-pub mod address;
+pub mod cache;
 pub use bitcoin;
 mod chain;
 pub mod cli;
