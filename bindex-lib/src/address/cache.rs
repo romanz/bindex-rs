@@ -73,7 +73,7 @@ impl Cache {
     pub fn sync(&self, index: &address::Index, tip: &mut BlockHash) -> Result<bool, Error> {
         self.run("sync", || {
             self.drop_stale_blocks(&index.chain)?;
-            let new_tip = index.chain.tip_hash().unwrap_or_else(BlockHash::all_zeros);
+            let new_tip = index.chain.tip_hash();
             if *tip == new_tip {
                 return Ok(false);
             }

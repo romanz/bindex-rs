@@ -3,10 +3,7 @@ mod scripthash;
 mod txid;
 mod txpos;
 
-use bitcoin::{
-    hashes::{sha256d, Hash},
-    BlockHash,
-};
+use bitcoin::{hashes::sha256d, BlockHash};
 
 use crate::chain::Chain;
 
@@ -199,9 +196,7 @@ impl IndexBuilder {
         Self {
             next_txnum: chain.next_txnum(),
             batches: vec![],
-            tip: chain
-                .tip_hash()
-                .unwrap_or_else(bitcoin::BlockHash::all_zeros),
+            tip: chain.tip_hash(),
         }
     }
 

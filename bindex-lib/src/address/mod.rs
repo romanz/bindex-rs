@@ -89,7 +89,7 @@ impl Index {
             }
             info!(
                 "block={} height={} headers loaded",
-                chain.tip_hash().unwrap(),
+                chain.tip_hash(),
                 chain.tip_height().unwrap(),
             );
         }
@@ -125,21 +125,20 @@ impl Index {
         Ok(stale.hash())
     }
 
-    pub fn sync_chain(&mut self, limit: usize) -> Result<Stats, Error> {
-        let mut stats = Stats::new(
-            self.chain
-                .tip_hash()
-                .unwrap_or_else(bitcoin::BlockHash::all_zeros),
-        );
-        let t = std::time::Instant::now();
-
-        let headers = loop {
-            let blockhash = self.chain.tip_hash().unwrap_or(self.genesis_hash);
+    fn fetch_new_headers(
+        &mut self,
+        limit: usize,
+    ) -> Result<impl IntoIterator<Item = bitcoin::block::Header>, Error> {
+        loop {
+            // usually the first header is already part of the current chain
+            let (mut blockhash, mut to_skip) = (self.chain.tip_hash(), 1);
+            if blockhash == bitcoin::BlockHash::all_zeros() {
+                // but if the chain is empty, we need also to fetch the genesis header
+                (blockhash, to_skip) = (self.genesis_hash, 0)
+            }
             let headers = self.client.get_headers(blockhash, limit)?;
-            if let Some(first) = headers.first() {
-                // skip first response header (when asking for non-genesis block)
-                let skip_first = Some(first.block_hash()) == self.chain.tip_hash();
-                break headers.into_iter().skip(if skip_first { 1 } else { 0 });
+            if !headers.is_empty() {
+                return Ok(headers.into_iter().skip(to_skip));
             }
             warn!(
                 "block={} height={} was rolled back",
@@ -147,12 +146,19 @@ impl Index {
                 self.chain.tip_height().unwrap(),
             );
             assert_eq!(blockhash, self.drop_tip()?);
-        };
+        }
+    }
+
+    pub fn sync_chain(&mut self, limit: usize) -> Result<Stats, Error> {
+        let mut stats = Stats::new(self.chain.tip_hash());
+        let t = std::time::Instant::now();
+
+        let headers = self.fetch_new_headers(limit)?;
 
         let mut builder = index::IndexBuilder::new(&self.chain);
         for header in headers {
             let blockhash = header.block_hash();
-            if self.chain.tip_hash() == Some(blockhash) {
+            if self.chain.tip_hash() == blockhash {
                 continue; // skip first header from response
             }
             // TODO: can be done concurrently
@@ -176,7 +182,7 @@ impl Index {
             self.store.flush()?;
             info!(
                 "block={} height={}: indexed {} blocks, {:.3}[MB], dt = {:.3}[s]: {:.3} [ms/block], {:.3} [MB/block], {:.3} [MB/s]",
-                self.chain.tip_hash().unwrap(),
+                self.chain.tip_hash(),
                 self.chain.tip_height().unwrap(),
                 stats.indexed_blocks,
                 stats.size_read as f64 / (1e6),

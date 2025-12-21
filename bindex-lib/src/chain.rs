@@ -16,6 +16,7 @@ pub struct Chain {
 }
 
 impl Chain {
+    /// Build a chain from a list of headers (sorted by height).
     pub fn new(rows: Vec<index::IndexedHeader>) -> Self {
         let mut block_hash = bitcoin::BlockHash::all_zeros();
         for row in &rows {
@@ -25,10 +26,15 @@ impl Chain {
         Self { rows }
     }
 
-    pub fn tip_hash(&self) -> Option<bitcoin::BlockHash> {
-        self.rows.last().map(index::IndexedHeader::hash)
+    /// Return tip block hash (or zeroes if no blocks).
+    pub fn tip_hash(&self) -> bitcoin::BlockHash {
+        self.rows
+            .last()
+            .map(index::IndexedHeader::hash)
+            .unwrap_or_else(bitcoin::BlockHash::all_zeros)
     }
 
+    /// Chain height (the genesis block is exluded)
     pub fn tip_height(&self) -> Option<usize> {
         self.rows.len().checked_sub(1)
     }
@@ -40,10 +46,7 @@ impl Chain {
     }
 
     pub fn add(&mut self, row: index::IndexedHeader) {
-        assert_eq!(
-            row.header().prev_blockhash,
-            self.tip_hash().unwrap_or_else(BlockHash::all_zeros)
-        );
+        assert_eq!(row.header().prev_blockhash, self.tip_hash());
         self.rows.push(row)
     }
 
