@@ -164,7 +164,7 @@ struct Args {
     network: cli::Network,
 
     /// Limit on how many recent transactions to print
-    #[arg(short = 'l', long = "limit", default_value_t = 10)]
+    #[arg(short = 'l', long = "limit", default_value_t = 0)]
     history_limit: usize,
 
     /// Text file, containing white-space separated addresses to add
@@ -242,15 +242,10 @@ impl Electrum {
         Ok(())
     }
 
-    fn wait(&mut self) -> Result<BlockHash> {
+    fn wait(&mut self) -> Result<()> {
         self.line.clear();
         self.stdout.read_line(&mut self.line)?; // wait for notification
-        let s = self.line.trim();
-        Ok(if s.is_empty() {
-            BlockHash::all_zeros()
-        } else {
-            BlockHash::from_str(s)?
-        })
+        Ok(())
     }
 }
 
@@ -273,29 +268,29 @@ fn run() -> Result<()> {
         server = Some(Electrum::start(&cache_file, args.network.into())?);
     }
     let mut index = cache::IndexedChain::open_default(&args.db_path, args.network)?;
-    let mut tip = BlockHash::all_zeros();
     loop {
-        let new_tip = loop {
+        // index new blocks (also handle reorgs)
+        let tip = loop {
             let stats = index.sync_chain(1000)?;
             if stats.indexed_blocks == 0 {
                 break stats.tip;
             }
         };
-        if tip != new_tip {
-            tip = new_tip;
-            cache.sync(&index)?;
-            let entries = get_history(cache.db())?;
-            print_history(entries, args.history_limit);
-        }
-        if args.sync_once {
-            break;
-        }
+        // make sure to update new scripthashes (even if there are no new blocks)
+        cache.sync(&index)?;
+        let entries = get_history(cache.db())?;
         match server.as_mut() {
             Some(s) => {
                 s.notify(tip)?;
-                tip = s.wait()?; // Electrum should send an ACK for an index sync request
+                s.wait()?; // Electrum should send an ACK for an index sync request
             }
-            None => thread::sleep(std::time::Duration::from_secs(1)),
+            None => {
+                print_history(entries, args.history_limit);
+                thread::sleep(std::time::Duration::from_secs(1));
+                if args.sync_once {
+                    break;
+                }
+            },
         }
     }
     Ok(())
