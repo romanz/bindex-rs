@@ -712,7 +712,7 @@ class ElectrumSession(SessionBase):
             if status != new_status:
                 self.hashX_subs[hashX] = new_status
                 await self.send_notification(
-                    "blockchain.scripthash.subscribe", (new_status,)
+                    "blockchain.scripthash.subscribe", (hashX, new_status)
                 )
 
     async def confirmed_history(self, hashX):
