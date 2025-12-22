@@ -11,6 +11,7 @@ import aiohttp
 import argparse
 import asyncio
 import base64
+import contextlib
 import functools
 import itertools
 import json
@@ -829,29 +830,32 @@ async def get_items(
     return items
 
 
-def update_scripthashes(c: sqlite3.Cursor, data: list[list[bytes]]):
+@contextlib.contextmanager
+def transaction(c: sqlite3.Cursor):
     # update bindex DB with the new scripthashes
     c.execute("BEGIN")
     try:
-        r = c.executemany("INSERT OR IGNORE INTO watch (script_hash) VALUES (?)", data)
-        if r.rowcount:
-            LOG.info("watching %d new addresses", r.rowcount)
+        yield
         c.execute("COMMIT")
     except Exception:
         c.execute("ROLLBACK")
         raise
+
+
+def update_scripthashes(c: sqlite3.Cursor, scripthashes):
+    # update bindex DB with the new scripthashes
+    with transaction(c):
+        r = c.executemany(
+            "INSERT OR IGNORE INTO watch (script_hash) VALUES (?)",
+            [(s,) for s in scripthashes],
+        )
+        if r.rowcount:
+            LOG.info("watching %d new addresses", r.rowcount)
 
 
 def get_scripthashes(c: sqlite3.Cursor) -> set[bytes]:
-    c.execute("BEGIN")
-    try:
-        c.execute("SELECT script_hash FROM watch")
-        scripthashes = set(s for (s,) in c.fetchall())
-        c.execute("COMMIT")
-        return scripthashes
-    except Exception:
-        c.execute("ROLLBACK")
-        raise
+    c.execute("SELECT script_hash FROM watch")
+    return set(s for (s,) in c.fetchall())
 
 
 class Indexer:
@@ -899,7 +903,7 @@ async def subscription_task(mgr: Manager, indexer: Indexer):
         # sending new scripthashes on subscription requests
         while True:
             reqs = await get_items(mgr.subscription_queue)
-            update_scripthashes(mgr.db.cursor(), data=[[i] for i, _ in reqs])
+            update_scripthashes(mgr.db.cursor(), scripthashes=[s for s, _ in reqs])
 
             # update `bindex`
             chain_updated = await indexer.sync(force=bool(reqs))
@@ -911,8 +915,8 @@ async def subscription_task(mgr: Manager, indexer: Indexer):
                 LOG.info("indexer at block=%r: %d reqs", indexer.tip, len(reqs))
 
             # mark subscription requests as done
-            for _, ack_fn in reqs:
-                ack_fn()
+            for _, fn in reqs:
+                fn()
 
             # make sure all sessions are notified
             watched = get_scripthashes(mgr.db.cursor())
