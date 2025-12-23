@@ -318,13 +318,13 @@ impl Cache {
         let mut select = self
             .db
             .prepare("SELECT block_hash, block_height FROM headers ORDER BY block_height DESC")?;
-        let rows = select.query_map((), |row| {
+        let rows_iter = select.query_map((), |row| {
             let hash = bitcoin::BlockHash::from_byte_array(row.get(0)?);
             let height: usize = row.get(1)?;
             Ok((hash, height))
         })?;
         let mut delete_from = None;
-        for row in rows {
+        for row in rows_iter {
             let (hash, height) = row?;
             match chain.get_header(hash, height) {
                 Ok(_header) => break,
