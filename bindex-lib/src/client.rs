@@ -89,14 +89,14 @@ impl Client {
         Ok(index::BlockBytes::new(data))
     }
 
-    // Supported by bitcoind 30.0+
+    // Introduced in https://github.com/bitcoin/bitcoin/pull/32540 (released in 30.0)
     pub fn get_spent_bytes(&self, hash: BlockHash) -> Result<index::SpentBytes, Error> {
         let url = format!("{}/rest/spenttxouts/{}.bin", self.url, hash);
         let data = self.get_bytes(&url)?;
         Ok(index::SpentBytes::new(data))
     }
 
-    // Introduced in https://github.com/bitcoin/bitcoin/pull/33657
+    // Introduced in https://github.com/bitcoin/bitcoin/pull/33657 (to be released in 31.0)
     pub fn get_block_part(
         &self,
         hash: BlockHash,

@@ -290,7 +290,7 @@ fn run() -> Result<()> {
                 if args.sync_once {
                     break;
                 }
-            },
+            }
         }
     }
     Ok(())
