@@ -291,8 +291,11 @@ impl Cache {
     pub fn sync(&self, index: &IndexedChain) -> Result<(), Error> {
         self.run("sync", || {
             self.drop_stale_blocks(&index.chain)?;
+            // Colect new transactions' locations (grouped per scripthash, sorted by txnum)
             let new_history = self.new_history(index)?;
+            // De-duplicate new transactions' locations (sorted by txnum)
             let new_locations: BTreeSet<_> = new_history.iter().map(|(_, loc)| loc).collect();
+            // De-duplicate new block headers (sorted by height)
             let new_headers: BTreeSet<_> = new_locations
                 .iter()
                 .map(|&loc| (loc.height, loc.indexed_header))
@@ -306,14 +309,16 @@ impl Cache {
                     self.db.path().unwrap_or("")
                 );
             }
-            // Note: some headers/transactions can be false-positives:
+            // Some headers/transactions can be false-positives (since we don't store the full scripthash)
             self.add_headers(new_headers.into_iter())?;
             self.add_transactions(new_locations.into_iter(), index)?;
+            // Keep only history entries related to the watched scripthashes
             self.add_history(new_history.into_iter())?;
             Ok(())
         })
     }
 
+    // Make sure the latest header is part of the active chain.
     fn drop_stale_blocks(&self, chain: &Chain) -> Result<(), Error> {
         let mut select = self
             .db
@@ -331,10 +336,12 @@ impl Cache {
                 Err(err) => {
                     warn!("reorg detected: {}", err);
                     delete_from = Some(height);
+                    // continue (in case more blocks are stale)
                 }
             }
         }
         if let Some(height) = delete_from {
+            // Should also delete stale transaction and history entries (due to `ON DELETE CASCADE`)
             let mut delete = self
                 .db
                 .prepare("DELETE FROM headers WHERE block_height >= ?1")?;
@@ -366,9 +373,11 @@ impl Cache {
         history: &mut BTreeSet<(ScriptHash, Location<'a>)>,
     ) -> Result<(), Error> {
         let chain = index.chain();
+        // Lookup existing header to scan only new transactions.
         let from = self
             .last_indexed_header(script_hash, chain)?
             .map_or(index::TxNum::default(), index::IndexedHeader::next_txnum);
+        // Collect new transactions' locations:
         index
             .locations_by_scripthash(script_hash, from)?
             .for_each(|loc| {
