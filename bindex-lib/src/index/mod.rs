@@ -5,7 +5,7 @@ mod txpos;
 
 use bitcoin::{hashes::sha256d, BlockHash};
 
-use crate::chain::Chain;
+use crate::headers::Headers;
 
 pub use header::IndexedHeader;
 pub use scripthash::ScriptHash;
@@ -193,7 +193,7 @@ pub struct IndexBuilder {
 }
 
 impl IndexBuilder {
-    pub fn new(chain: &Chain) -> Self {
+    pub fn new(chain: &Headers) -> Self {
         Self {
             next_txnum: chain.next_txnum(),
             batches: vec![],

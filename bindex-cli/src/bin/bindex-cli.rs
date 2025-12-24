@@ -2,6 +2,7 @@ use bindex::{
     bitcoin::{self, consensus::deserialize, hashes::Hash, BlockHash, Txid},
     cache,
     network::Network,
+    IndexedChain,
 };
 use chrono::{TimeZone, Utc};
 use clap::Parser;
@@ -268,7 +269,7 @@ fn run() -> Result<()> {
             .ok_or("Electrum requires setting a cache file")?;
         server = Some(Electrum::start(&cache_file, args.network.into())?);
     }
-    let mut index = cache::IndexedChain::open_default(&args.db_path, args.network)?;
+    let mut index = IndexedChain::open_default(&args.db_path, args.network)?;
     loop {
         // index new blocks (also handle reorgs)
         let tip = loop {

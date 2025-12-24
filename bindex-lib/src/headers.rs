@@ -1,4 +1,4 @@
-use crate::index;
+use crate::{index, Location};
 
 use bitcoin::{hashes::Hash, BlockHash};
 
@@ -11,11 +11,11 @@ pub enum Reorg {
     Stale(bitcoin::BlockHash, usize),
 }
 
-pub struct Chain {
+pub struct Headers {
     rows: Vec<index::IndexedHeader>,
 }
 
-impl Chain {
+impl Headers {
     /// Build a chain from a list of headers (sorted by height).
     pub fn new(rows: Vec<index::IndexedHeader>) -> Self {
         let mut block_hash = bitcoin::BlockHash::all_zeros();
@@ -104,19 +104,5 @@ impl Chain {
             block_offset,
             indexed_header,
         }
-    }
-}
-
-#[derive(PartialEq, Eq, PartialOrd, Clone, Copy, Debug)]
-pub struct Location<'a> {
-    pub txnum: index::TxNum, // tx number (position within the chain)
-    pub block_height: usize, // block height
-    pub block_offset: u32,   // tx position within its block
-    pub indexed_header: &'a index::IndexedHeader,
-}
-
-impl Ord for Location<'_> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.txnum.cmp(&other.txnum)
     }
 }
