@@ -12,7 +12,7 @@ use rusqlite::OptionalExtension;
 
 use crate::{
     chain::{self, Chain, Location},
-    cli, client, db,
+    network::Network, client, db,
     index::{self, ScriptHash},
 };
 
@@ -116,7 +116,7 @@ impl IndexedChain {
         })
     }
 
-    pub fn open_default(db_path: &str, network: cli::Network) -> Result<Self, Error> {
+    pub fn open_default(db_path: &str, network: Network) -> Result<Self, Error> {
         let bitcoin_network: bitcoin::Network = network.into();
         let default_db_path = format!("{db_path}/{bitcoin_network}");
         let default_rest_url = format!("http://localhost:{}", network.default_rpc_port());

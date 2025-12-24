@@ -1,7 +1,9 @@
-pub mod cache;
 pub use bitcoin;
+
+pub mod cache;
+pub mod network;
+
 mod chain;
-pub mod cli;
 mod client;
 mod db;
 mod index;

@@ -1,6 +1,7 @@
 use bindex::{
     bitcoin::{self, consensus::deserialize, hashes::Hash, BlockHash, Txid},
-    cache, cli,
+    cache,
+    network::Network,
 };
 use chrono::{TimeZone, Utc};
 use clap::Parser;
@@ -160,8 +161,8 @@ struct Args {
     #[arg(long = "db-path")]
     db_path: String,
 
-    #[arg(value_enum, short = 'n', long = "network", default_value_t = cli::Network::Bitcoin)]
-    network: cli::Network,
+    #[arg(value_enum, short = 'n', long = "network", default_value_t = Network::Bitcoin)]
+    network: Network,
 
     /// Limit on how many recent transactions to print
     #[arg(short = 'l', long = "limit", default_value_t = 0)]
