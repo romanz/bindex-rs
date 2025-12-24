@@ -2,10 +2,10 @@ use std::ops::ControlFlow;
 
 use bitcoin_slices::{bsl, Visit as _};
 
-use crate::index::{BlockBytes, BlockIndex, Error, HashPrefixRow, TxNum};
+use crate::index::{BlockBytes, Error, HashPrefixRow, IndexedBlock, TxNum};
 
 struct IndexVisitor<'a> {
-    result: &'a mut BlockIndex<HashPrefixRow>,
+    result: &'a mut IndexedBlock<HashPrefixRow>,
 }
 
 impl bitcoin_slices::Visitor for IndexVisitor<'_> {
@@ -19,8 +19,8 @@ impl bitcoin_slices::Visitor for IndexVisitor<'_> {
     }
 }
 
-pub fn index(block: &BlockBytes, txnum: TxNum) -> Result<BlockIndex<HashPrefixRow>, Error> {
-    let mut result = BlockIndex::new(txnum);
+pub fn index(block: &BlockBytes, txnum: TxNum) -> Result<IndexedBlock<HashPrefixRow>, Error> {
+    let mut result = IndexedBlock::new(txnum);
     let mut visitor = IndexVisitor {
         result: &mut result,
     };

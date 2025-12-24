@@ -147,12 +147,12 @@ pub struct Batch {
     pub header: IndexedHeader,
 }
 
-pub struct BlockIndex<R> {
+struct IndexedBlock<R> {
     next_txnum: TxNum,
     rows: Vec<R>,
 }
 
-impl<R> BlockIndex<R> {
+impl<R> IndexedBlock<R> {
     fn new(next_txnum: TxNum) -> Self {
         Self {
             next_txnum,

@@ -3,7 +3,7 @@ use std::ops::ControlFlow;
 use bitcoin::hashes::Hash;
 use bitcoin_slices::{bsl, Parse, Visit};
 
-use crate::index::{BlockBytes, BlockIndex, Error, HashPrefixRow, Prefix, SpentBytes, TxNum};
+use crate::index::{BlockBytes, Error, HashPrefixRow, IndexedBlock, Prefix, SpentBytes, TxNum};
 
 bitcoin::hashes::hash_newtype! {
     /// https://electrumx-spesmilo.readthedocs.io/en/latest/protocol-basics.html#script-hashes
@@ -117,8 +117,8 @@ pub fn index(
     block: &BlockBytes,
     spent: &SpentBytes,
     txnum: TxNum,
-) -> Result<BlockIndex<HashPrefixRow>, Error> {
-    let mut result = BlockIndex::new(txnum);
+) -> Result<IndexedBlock<HashPrefixRow>, Error> {
+    let mut result = IndexedBlock::new(txnum);
     let txnum1 = add_block_rows(block, txnum, &mut result.rows)?;
     let txnum2 = add_spent_rows(spent, txnum, &mut result.rows)?;
     assert_eq!(txnum1, txnum2);
