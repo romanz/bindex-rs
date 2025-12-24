@@ -301,7 +301,7 @@ impl Cache {
             // De-duplicate new block headers (sorted by height)
             let new_headers: BTreeSet<_> = new_locations
                 .iter()
-                .map(|&loc| (loc.height, loc.indexed_header))
+                .map(|&loc| (loc.block_height, loc.indexed_header))
                 .collect();
             if !new_locations.is_empty() {
                 info!(
@@ -427,7 +427,7 @@ impl Cache {
             let tx_bytes = index.get_tx_bytes(loc).expect("missing tx bytes");
             let parsed = bsl::Transaction::parse(&tx_bytes).expect("invalid tx");
             let txid = Txid::from(parsed.parsed().txid()).to_byte_array();
-            rows += insert.execute((loc.height, loc.offset, txid, tx_bytes))?;
+            rows += insert.execute((loc.block_height, loc.block_offset, txid, tx_bytes))?;
         }
         Ok(rows)
     }
@@ -444,7 +444,7 @@ impl Cache {
             for loc in locations {
                 let tx: bitcoin::Transaction = self.db.query_row(
                     "SELECT tx_bytes FROM transactions WHERE block_height = ?1 AND block_offset = ?2",
-                    (loc.height, loc.offset),
+                    (loc.block_height, loc.block_offset),
                     |row| {
                         let tx_bytes: Vec<u8> = row.get(0)?;
                         Ok(deserialize(&tx_bytes).expect("invalid tx"))
@@ -487,8 +487,8 @@ impl Cache {
                         assert!(amount > 0);
                         rows += insert.execute((
                             script_hash.as_byte_array(),
-                            loc.height,
-                            loc.offset,
+                            loc.block_height,
+                            loc.block_offset,
                             false,
                             i,
                             -amount,
@@ -501,8 +501,8 @@ impl Cache {
                     if script_hash == ScriptHash::new(&output.script_pubkey) {
                         rows += insert.execute((
                             script_hash.as_byte_array(),
-                            loc.height,
-                            loc.offset,
+                            loc.block_height,
+                            loc.block_offset,
                             true,
                             i,
                             output.value.to_sat(),

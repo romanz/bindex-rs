@@ -74,7 +74,7 @@ impl Chain {
     /// Find transaction's chain location.
     pub fn find_by_txnum(&self, txnum: index::TxNum) -> Location<'_> {
         // Compare each header using its `next_txnum`
-        let height = match self
+        let block_height = match self
             .rows
             .binary_search_by_key(&txnum, index::IndexedHeader::next_txnum)
         {
@@ -82,7 +82,7 @@ impl Chain {
             Err(i) => i,
         };
 
-        let indexed_header = self.rows.get(height).expect("missing height");
+        let indexed_header = self.rows.get(block_height).expect("missing height");
         assert!(
             txnum < indexed_header.next_txnum(),
             "binary search failed to find the correct position"
@@ -90,17 +90,18 @@ impl Chain {
 
         let prev_txnum = self
             .rows
-            .get(height - 1)
+            .get(block_height - 1)
             .map_or_else(index::TxNum::default, index::IndexedHeader::next_txnum);
 
-        let offset = txnum
+        // txnum offset within its block
+        let block_offset = txnum
             .offset_from(prev_txnum)
             .expect("binary search failed to find the correct position");
 
         Location {
             txnum,
-            height,
-            offset,
+            block_height,
+            block_offset,
             indexed_header,
         }
     }
@@ -109,8 +110,8 @@ impl Chain {
 #[derive(PartialEq, Eq, PartialOrd, Clone, Copy, Debug)]
 pub struct Location<'a> {
     pub txnum: index::TxNum, // tx number (position within the chain)
-    pub height: usize,       // block height
-    pub offset: u32,         // tx position within its block
+    pub block_height: usize, // block height
+    pub block_offset: u32,   // tx position within its block
     pub indexed_header: &'a index::IndexedHeader,
 }
 
