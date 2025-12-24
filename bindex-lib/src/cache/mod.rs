@@ -43,13 +43,6 @@ pub enum Error {
     BlockNotFound(#[from] chain::Reorg),
 }
 
-pub struct IndexedChain {
-    genesis_hash: bitcoin::BlockHash,
-    chain: chain::Chain,
-    client: client::Client,
-    store: db::Store,
-}
-
 pub struct Stats {
     pub tip: bitcoin::BlockHash,
     pub indexed_blocks: usize,
@@ -66,6 +59,13 @@ impl Stats {
             elapsed: Duration::ZERO,
         }
     }
+}
+
+pub struct IndexedChain {
+    genesis_hash: bitcoin::BlockHash,
+    chain: chain::Chain,
+    client: client::Client,
+    store: db::Store,
 }
 
 impl IndexedChain {
