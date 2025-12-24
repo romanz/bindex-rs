@@ -4,7 +4,8 @@ use crate::index::{self, TxBlockPosRow};
 
 use log::*;
 
-pub struct Store {
+/// Key-value database
+pub struct DB {
     db: rocksdb::DB,
     compacting: bool,
 }
@@ -44,7 +45,7 @@ fn cf_descriptors(
         .map(|&name| rocksdb::ColumnFamilyDescriptor::new(name, opts.clone()))
 }
 
-impl Store {
+impl DB {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, rocksdb::Error> {
         let opts = default_opts();
         let db = rocksdb::DB::open_cf_descriptors(&opts, path, cf_descriptors(&opts))?;

@@ -66,7 +66,7 @@ pub struct IndexedChain {
     genesis_hash: bitcoin::BlockHash,
     chain: chain::Chain,
     client: client::Client,
-    store: db::Store,
+    store: db::DB,
 }
 
 impl IndexedChain {
@@ -97,7 +97,7 @@ impl IndexedChain {
             res => assert_eq!(index::BlockBytes::new(res?), genesis_block),
         };
 
-        let store = db::Store::open(db_path)?;
+        let store = db::DB::open(db_path)?;
         let chain = chain::Chain::new(store.headers()?);
         if let Some(indexed_genesis) = chain.genesis() {
             if indexed_genesis.hash() != genesis_hash {
