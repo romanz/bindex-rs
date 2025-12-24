@@ -53,7 +53,7 @@ impl Stats {
 
 pub struct IndexedChain {
     genesis_hash: bitcoin::BlockHash,
-    chain: headers::Headers,
+    headers: headers::Headers,
     client: client::Client,
     store: db::DB,
 }
@@ -87,20 +87,20 @@ impl IndexedChain {
         };
 
         let store = db::DB::open(db_path)?;
-        let chain = headers::Headers::new(store.headers()?);
-        if let Some(indexed_genesis) = chain.genesis() {
+        let headers = headers::Headers::new(store.headers()?);
+        if let Some(indexed_genesis) = headers.genesis() {
             if indexed_genesis.hash() != genesis_hash {
                 return Err(Error::ChainMismatch(indexed_genesis.hash(), genesis_hash));
             }
             info!(
                 "block={} height={} headers loaded",
-                chain.tip_hash(),
-                chain.tip_height().unwrap(),
+                headers.tip_hash(),
+                headers.tip_height().unwrap(),
             );
         }
         Ok(IndexedChain {
             genesis_hash,
-            chain,
+            headers,
             client,
             store,
         })
@@ -114,10 +114,13 @@ impl IndexedChain {
     }
 
     fn drop_tip(&mut self) -> Result<bitcoin::BlockHash, Error> {
-        let stale = self.chain.pop().expect("cannot drop tip of an empty chain");
+        let stale = self
+            .headers
+            .pop()
+            .expect("cannot drop tip of an empty chain");
         let block_bytes = self.client.get_block_bytes(stale.hash())?;
         let spent_bytes = self.client.get_spent_bytes(stale.hash())?;
-        let mut builder = index::IndexBuilder::new(&self.chain);
+        let mut builder = index::IndexBuilder::new(&self.headers);
         builder.add(stale.hash(), &block_bytes, &spent_bytes)?;
         self.store.delete(&builder.into_batches())?;
         Ok(stale.hash())
@@ -129,7 +132,7 @@ impl IndexedChain {
     ) -> Result<impl IntoIterator<Item = bitcoin::block::Header>, Error> {
         loop {
             // usually the first header is already part of the current chain
-            let (mut blockhash, mut to_skip) = (self.chain.tip_hash(), 1);
+            let (mut blockhash, mut to_skip) = (self.headers.tip_hash(), 1);
             if blockhash == bitcoin::BlockHash::all_zeros() {
                 // but if the chain is empty, we need also to fetch the genesis header
                 (blockhash, to_skip) = (self.genesis_hash, 0)
@@ -141,22 +144,22 @@ impl IndexedChain {
             warn!(
                 "block={} height={} was rolled back",
                 blockhash,
-                self.chain.tip_height().unwrap(),
+                self.headers.tip_height().unwrap(),
             );
             assert_eq!(blockhash, self.drop_tip()?);
         }
     }
 
     pub fn sync_chain(&mut self, limit: usize) -> Result<Stats, Error> {
-        let mut stats = Stats::new(self.chain.tip_hash());
+        let mut stats = Stats::new(self.headers.tip_hash());
         let t = std::time::Instant::now();
 
         let headers = self.fetch_new_headers(limit)?;
 
-        let mut builder = index::IndexBuilder::new(&self.chain);
+        let mut builder = index::IndexBuilder::new(&self.headers);
         for header in headers {
             let blockhash = header.block_hash();
-            if self.chain.tip_hash() == blockhash {
+            if self.headers.tip_hash() == blockhash {
                 continue; // skip first header from response
             }
             // TODO: can be done concurrently
@@ -172,7 +175,7 @@ impl IndexedChain {
         let batches = builder.into_batches();
         self.store.write(&batches)?;
         for batch in batches {
-            self.chain.add(batch.header);
+            self.headers.add(batch.header);
         }
 
         stats.elapsed = t.elapsed();
@@ -180,8 +183,8 @@ impl IndexedChain {
             self.store.flush()?;
             info!(
                 "block={} height={}: indexed {} blocks, {:.3}[MB], dt = {:.3}[s]: {:.3} [ms/block], {:.3} [MB/block], {:.3} [MB/s]",
-                self.chain.tip_hash(),
-                self.chain.tip_height().unwrap(),
+                self.headers.tip_hash(),
+                self.headers.tip_height().unwrap(),
                 stats.indexed_blocks,
                 stats.size_read as f64 / (1e6),
                 stats.elapsed.as_secs_f64(),
@@ -208,7 +211,7 @@ impl IndexedChain {
         Ok(txnums
             .into_iter()
             // chain and store must be in sync
-            .map(|txnum| self.chain.find_by_txnum(txnum)))
+            .map(|txnum| self.headers.find_by_txnum(txnum)))
     }
 
     pub fn locations_by_txid(
@@ -219,7 +222,7 @@ impl IndexedChain {
         Ok(txnums
             .into_iter()
             // chain and store must be in sync
-            .map(|txnum| self.chain.find_by_txnum(txnum)))
+            .map(|txnum| self.headers.find_by_txnum(txnum)))
     }
 
     pub fn get_tx_bytes(&self, location: &Location) -> Result<Vec<u8>, Error> {
@@ -231,11 +234,7 @@ impl IndexedChain {
             .get_block_part(location.indexed_header.hash(), pos)?)
     }
 
-    pub fn get_header(
-        &self,
-        block_hash: bitcoin::BlockHash,
-        height: usize,
-    ) -> Result<&index::IndexedHeader, headers::Reorg> {
-        self.chain.get_header(block_hash, height)
+    pub fn headers(&self) -> &headers::Headers {
+        &self.headers
     }
 }
