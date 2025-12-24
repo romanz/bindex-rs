@@ -12,8 +12,9 @@ use rusqlite::OptionalExtension;
 
 use crate::{
     chain::{self, Chain, Location},
-    network::Network, client, db,
+    client, db,
     index::{self, ScriptHash},
+    network::Network,
 };
 
 #[derive(thiserror::Error, Debug)]
@@ -209,13 +210,16 @@ impl IndexedChain {
     fn locations_by_scripthash(
         &self,
         script_hash: &index::ScriptHash,
-        from: index::TxNum,
+        latest_header: Option<&index::IndexedHeader>,
     ) -> Result<impl Iterator<Item = Location<'_>>, Error> {
+        let from = latest_header
+            .map(|header| header.next_txnum())
+            .unwrap_or_default();
         let txnums = self.store.scan_by_script_hash(script_hash, from)?;
         Ok(txnums
             .into_iter()
             // chain and store must be in sync
-            .map(|txnum| self.chain.find_by_txnum(txnum).expect("invalid txnum")))
+            .map(|txnum| self.chain.find_by_txnum(txnum)))
     }
 
     #[allow(dead_code)]
@@ -227,7 +231,7 @@ impl IndexedChain {
         Ok(txnums
             .into_iter()
             // chain and store must be in sync
-            .map(|txnum| self.chain.find_by_txnum(txnum).expect("invalid txnum")))
+            .map(|txnum| self.chain.find_by_txnum(txnum)))
     }
 
     fn get_tx_bytes(&self, location: &Location) -> Result<Vec<u8>, Error> {
@@ -237,10 +241,6 @@ impl IndexedChain {
         Ok(self
             .client
             .get_block_part(location.indexed_header.hash(), pos)?)
-    }
-
-    fn chain(&self) -> &Chain {
-        &self.chain
     }
 }
 
@@ -294,13 +294,16 @@ impl Cache {
             // Colect new transactions' locations (grouped per scripthash, sorted by txnum)
             let new_history = self.new_history(index)?;
             // De-duplicate new transactions' locations (sorted by txnum)
-            let new_locations: BTreeSet<_> = new_history.iter().map(|(_, loc)| loc).collect();
+            let new_locations: BTreeSet<_> = new_history
+                .iter()
+                .flat_map(|(_, locations)| locations.iter())
+                .collect();
             // De-duplicate new block headers (sorted by height)
             let new_headers: BTreeSet<_> = new_locations
                 .iter()
                 .map(|&loc| (loc.height, loc.indexed_header))
                 .collect();
-            if !new_history.is_empty() {
+            if !new_locations.is_empty() {
                 info!(
                     "adding {} history entries, {} transactions, {} headers to cache={:?}",
                     new_history.len(),
@@ -350,40 +353,47 @@ impl Cache {
         Ok(())
     }
 
+    /// Query index for new transactions, starting from last indexed block in cache.
     fn new_history<'a>(
         &self,
         index: &'a IndexedChain,
-    ) -> Result<BTreeSet<(ScriptHash, Location<'a>)>, Error> {
-        let mut stmt = self.db.prepare("SELECT script_hash FROM watch")?;
-        let results = stmt.query_map((), |row| Ok(ScriptHash::from_byte_array(row.get(0)?)))?;
+    ) -> Result<Vec<(ScriptHash, BTreeSet<Location<'a>>)>, Error> {
+        let chain = &index.chain;
 
-        let mut history = BTreeSet::<(ScriptHash, Location<'a>)>::new();
-        for res in results {
-            let script_hash = res?;
-            self.new_history_for_script_hash(&script_hash, index, &mut history)?;
-        }
-        Ok(history)
-    }
-
-    /// Query index for new transactions, starting from last indexed block in cache.
-    fn new_history_for_script_hash<'a>(
-        &self,
-        script_hash: &ScriptHash,
-        index: &'a IndexedChain,
-        history: &mut BTreeSet<(ScriptHash, Location<'a>)>,
-    ) -> Result<(), Error> {
-        let chain = index.chain();
-        // Lookup existing header to scan only new transactions.
-        let from = self
-            .last_indexed_header(script_hash, chain)?
-            .map_or(index::TxNum::default(), index::IndexedHeader::next_txnum);
+        let mut stmt = self.db.prepare(
+            r"
+            WITH max_heights AS (
+                SELECT script_hash, max(block_height) AS `block_height`
+                FROM watch LEFT JOIN history USING (script_hash)
+                GROUP BY 1
+            )
+            SELECT script_hash, block_height, block_hash
+            FROM max_heights LEFT JOIN headers USING (block_height)",
+        )?;
+        let rows_iter = stmt.query_map([], |row| {
+            let script_hash = ScriptHash::from_byte_array(row.get(0)?);
+            let block_height: Option<usize> = row.get(1)?;
+            let latest_header = if let Some(height) = block_height {
+                let block_hash = bitcoin::BlockHash::from_byte_array(row.get(2)?);
+                let header = chain
+                    .get_header(block_hash, height)
+                    .expect("unexpected reorg");
+                Some(header)
+            } else {
+                None
+            };
+            Ok((script_hash, latest_header))
+        })?;
         // Collect new transactions' locations:
-        index
-            .locations_by_scripthash(script_hash, from)?
-            .for_each(|loc| {
-                history.insert((*script_hash, loc));
-            });
-        Ok(())
+        rows_iter
+            .map(|row| {
+                let (script_hash, latest_header) = row?;
+                let locations = index
+                    .locations_by_scripthash(&script_hash, latest_header)?
+                    .collect();
+                Ok((script_hash, locations))
+            })
+            .collect::<Result<_, Error>>()
     }
 
     fn add_headers<'a>(
@@ -424,95 +434,84 @@ impl Cache {
 
     fn add_history<'a>(
         &self,
-        entries: impl Iterator<Item = (ScriptHash, Location<'a>)>,
+        entries: impl Iterator<Item = (ScriptHash, BTreeSet<Location<'a>>)>,
     ) -> Result<usize, Error> {
         let mut insert = self
             .db
             .prepare("INSERT INTO history VALUES (?1, ?2, ?3, ?4, ?5, ?6)")?;
         let mut rows = 0;
-        for (script_hash, loc) in entries {
-            let tx: bitcoin::Transaction = self.db.query_row(
-                "SELECT tx_bytes FROM transactions WHERE block_height = ?1 AND block_offset = ?2",
-                (loc.height, loc.offset),
-                |row| {
-                    let tx_bytes: Vec<u8> = row.get(0)?;
-                    Ok(deserialize(&tx_bytes).expect("invalid tx"))
-                },
-            )?;
-            // Add spending entries
-            for (i, input) in tx.input.iter().enumerate() {
-                let prevout = input.previous_output;
-                // txid -> (height, offset)
-                let result = self
-                    .db
-                    .query_row(
-                        "SELECT block_height, block_offset FROM transactions WHERE tx_id = ?1",
-                        [prevout.txid.as_byte_array()],
-                        |row| Ok((row.get(0)?, row.get(1)?)),
-                    )
-                    .optional()?;
-                let (height, offset): (usize, usize) = match result {
-                    Some(v) => v,
-                    None => continue,
-                };
-                // (script_hash, height, offset, `true`, index) -> amount
-                let result: Option<i64> = self.db.query_row(
-                    "SELECT amount FROM history WHERE script_hash = ?1 AND block_height = ?2 AND block_offset = ?3 AND is_output = TRUE AND index_ = ?4",
-                    (script_hash.as_byte_array(), height, offset, prevout.vout),
-                    |row| row.get(0)
-                ).optional()?;
-                // Skip if not found (e.g. an input spending another script_hash)
-                if let Some(amount) = result {
-                    assert!(amount > 0);
-                    rows += insert.execute((
-                        script_hash.as_byte_array(),
-                        loc.height,
-                        loc.offset,
-                        false,
-                        i,
-                        -amount,
-                    ))?;
+        for (script_hash, locations) in entries {
+            for loc in locations {
+                let tx: bitcoin::Transaction = self.db.query_row(
+                    "SELECT tx_bytes FROM transactions WHERE block_height = ?1 AND block_offset = ?2",
+                    (loc.height, loc.offset),
+                    |row| {
+                        let tx_bytes: Vec<u8> = row.get(0)?;
+                        Ok(deserialize(&tx_bytes).expect("invalid tx"))
+                    },
+                )?;
+                // Add spending entries
+                for (i, input) in tx.input.iter().enumerate() {
+                    let prevout = input.previous_output;
+                    // txid -> (height, offset)
+                    let result = self
+                        .db
+                        .query_row(
+                            "SELECT block_height, block_offset FROM transactions WHERE tx_id = ?1",
+                            [prevout.txid.as_byte_array()],
+                            |row| Ok((row.get(0)?, row.get(1)?)),
+                        )
+                        .optional()?;
+                    let (height, offset): (usize, usize) = match result {
+                        Some(v) => v,
+                        None => continue,
+                    };
+                    // (script_hash, height, offset, `true`, index) -> amount
+                    let result: Option<i64> = self
+                        .db
+                        .query_row(
+                            r"
+                        SELECT amount
+                        FROM history
+                        WHERE script_hash = ?1
+                          AND block_height = ?2
+                          AND block_offset = ?3
+                          AND is_output = TRUE
+                          AND index_ = ?4",
+                            (script_hash.as_byte_array(), height, offset, prevout.vout),
+                            |row| row.get(0),
+                        )
+                        .optional()?;
+                    // Skip if not found (e.g. an input spending another script_hash)
+                    if let Some(amount) = result {
+                        assert!(amount > 0);
+                        rows += insert.execute((
+                            script_hash.as_byte_array(),
+                            loc.height,
+                            loc.offset,
+                            false,
+                            i,
+                            -amount,
+                        ))?;
+                    }
                 }
-            }
-            // Add funding entries
-            for (i, output) in tx.output.iter().enumerate() {
-                // Skip if funding another script_hash
-                if script_hash == ScriptHash::new(&output.script_pubkey) {
-                    rows += insert.execute((
-                        script_hash.as_byte_array(),
-                        loc.height,
-                        loc.offset,
-                        true,
-                        i,
-                        output.value.to_sat(),
-                    ))?;
+                // Add funding entries
+                for (i, output) in tx.output.iter().enumerate() {
+                    // Skip if funding another script_hash
+                    if script_hash == ScriptHash::new(&output.script_pubkey) {
+                        rows += insert.execute((
+                            script_hash.as_byte_array(),
+                            loc.height,
+                            loc.offset,
+                            true,
+                            i,
+                            output.value.to_sat(),
+                        ))?;
+                    }
                 }
             }
         }
         Ok(rows)
-    }
-
-    fn last_indexed_header<'a>(
-        &self,
-        script_hash: &ScriptHash,
-        chain: &'a Chain,
-    ) -> Result<Option<&'a index::IndexedHeader>, Error> {
-        let mut stmt = self.db.prepare(
-            r"
-            SELECT block_hash, block_height
-            FROM history INNER JOIN headers USING (block_height)
-            WHERE script_hash = ?1
-            ORDER BY block_height DESC
-            LIMIT 1",
-        )?;
-        stmt.query_row([script_hash.as_byte_array()], |row| {
-            let blockhash = bitcoin::BlockHash::from_byte_array(row.get(0)?);
-            let height: usize = row.get(1)?;
-            Ok((blockhash, height))
-        })
-        .optional()?
-        .map(|(blockhash, height)| Ok(chain.get_header(blockhash, height)?))
-        .transpose()
     }
 
     pub fn add(&self, addresses: impl IntoIterator<Item = bitcoin::Address>) -> Result<(), Error> {

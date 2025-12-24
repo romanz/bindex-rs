@@ -71,16 +71,18 @@ impl Chain {
         }
     }
 
-    pub fn find_by_txnum(&self, txnum: index::TxNum) -> Option<Location<'_>> {
+    /// Find transaction's chain location.
+    pub fn find_by_txnum(&self, txnum: index::TxNum) -> Location<'_> {
+        // Compare each header using its `next_txnum`
         let height = match self
             .rows
             .binary_search_by_key(&txnum, index::IndexedHeader::next_txnum)
         {
-            Ok(i) => i + 1, // hitting exactly a block boundary txnum -> next block
+            Ok(i) => i + 1, // hitting exactly a block boundary `txnum` -> next block
             Err(i) => i,
         };
 
-        let indexed_header = self.rows.get(height)?;
+        let indexed_header = self.rows.get(height).expect("missing height");
         assert!(
             txnum < indexed_header.next_txnum(),
             "binary search failed to find the correct position"
@@ -91,17 +93,16 @@ impl Chain {
             .get(height - 1)
             .map_or_else(index::TxNum::default, index::IndexedHeader::next_txnum);
 
-        assert!(
-            txnum >= prev_txnum,
-            "binary search failed to find the correct position"
-        );
-        let offset = txnum.offset_from(prev_txnum).unwrap();
-        Some(Location {
+        let offset = txnum
+            .offset_from(prev_txnum)
+            .expect("binary search failed to find the correct position");
+
+        Location {
             txnum,
             height,
             offset,
             indexed_header,
-        })
+        }
     }
 }
 
