@@ -54,7 +54,7 @@ pub struct Stats {
     pub tip: bitcoin::BlockHash,
     pub indexed_blocks: usize,
     pub size_read: usize,
-    pub elapsed: std::time::Duration,
+    pub elapsed: Duration,
 }
 
 impl Stats {
