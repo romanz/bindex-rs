@@ -1,4 +1,7 @@
-use crate::{index, Location};
+use crate::{
+    index::{self, IndexedHeader},
+    Location,
+};
 
 use bitcoin::{hashes::Hash, BlockHash};
 
@@ -39,13 +42,6 @@ impl Headers {
         self.rows.len().checked_sub(1)
     }
 
-    /// TxNum of the next transaction to be indexed (also the total number of indexed transactions).
-    pub fn next_txnum(&self) -> index::TxNum {
-        self.rows
-            .last()
-            .map_or_else(index::TxNum::default, index::IndexedHeader::next_txnum)
-    }
-
     /// Add new tip.
     pub fn add(&mut self, tip: index::IndexedHeader) {
         assert_eq!(tip.header().prev_blockhash, self.tip_hash());
@@ -63,6 +59,10 @@ impl Headers {
 
     pub fn genesis(&self) -> Option<&index::IndexedHeader> {
         self.rows.first()
+    }
+
+    pub fn iter_headers(&self) -> impl Iterator<Item = &IndexedHeader> {
+        self.rows.iter()
     }
 
     pub fn get_header(

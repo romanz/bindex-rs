@@ -117,7 +117,7 @@ impl Cache {
         let mut delete_from = None;
         for row in rows_iter {
             let (hash, height) = row?;
-            match chain.headers().get_header(hash, height) {
+            match chain.check_header(hash, height) {
                 Ok(_header) => break,
                 Err(err) => {
                     warn!("reorg detected: {}", err);
@@ -157,8 +157,7 @@ impl Cache {
             let latest_header = if let Some(height) = block_height {
                 let block_hash = bitcoin::BlockHash::from_byte_array(row.get(2)?);
                 let header = chain
-                    .headers()
-                    .get_header(block_hash, height)
+                    .check_header(block_hash, height)
                     .expect("unexpected reorg");
                 Some(header)
             } else {

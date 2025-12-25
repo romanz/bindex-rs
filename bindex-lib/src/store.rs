@@ -233,6 +233,7 @@ impl IndexedChain {
             .map(|txnum| self.headers.find_by_txnum(txnum)))
     }
 
+    /// Fetch transaction's bytes from bitcoind.
     pub fn get_tx_bytes(&self, location: &Location) -> Result<Vec<u8>, Error> {
         // Lookup tx position within its block (offset & size)
         let pos = self.store.get_tx_block_pos(location.txnum)?;
@@ -242,7 +243,18 @@ impl IndexedChain {
             .get_block_part(location.indexed_header.hash(), pos)?)
     }
 
-    pub fn headers(&self) -> &headers::Headers {
-        &self.headers
+    /// Iterate over block headers.
+    pub fn iter_headers(&self) -> impl Iterator<Item = &bitcoin::block::Header> {
+        self.headers
+            .iter_headers()
+            .map(index::IndexedHeader::header)
+    }
+
+    pub fn check_header(
+        &self,
+        hash: bitcoin::BlockHash,
+        height: usize,
+    ) -> Result<&index::IndexedHeader, Error> {
+        Ok(self.headers.get_header(hash, height)?)
     }
 }
