@@ -73,9 +73,9 @@ impl Cache {
     /// Synchornize index with current bitcoind state.
     pub fn sync(&self, chain: &IndexedChain) -> Result<(), Error> {
         self.run("sync", || {
-            self.drop_stale_blocks(chain)?;
             // Colect new transactions' locations (grouped per scripthash, sorted by txnum)
-            let new_history = self.new_history(chain)?;
+            // Also, drop stale blocks from cache.
+            let new_history = self.sync_history(chain)?;
             // De-duplicate new transactions' locations (sorted by txnum)
             let new_locations: BTreeSet<_> = new_history
                 .iter()
@@ -115,6 +115,7 @@ impl Cache {
             Ok((hash, height))
         })?;
         let mut delete_from = None;
+        // Find the first non-stale block (scanning backwards from tip):
         for row in rows_iter {
             let (hash, height) = row?;
             match chain.check_header(hash, height) {
@@ -127,7 +128,7 @@ impl Cache {
             }
         }
         if let Some(height) = delete_from {
-            // Should also delete stale transaction and history entries (due to `ON DELETE CASCADE`)
+            // Drop stale blocks, transactions and history entries (due to `ON DELETE CASCADE`)
             let mut delete = self
                 .db
                 .prepare("DELETE FROM headers WHERE block_height >= ?1")?;
@@ -137,10 +138,13 @@ impl Cache {
     }
 
     /// Query index for new transactions, starting from last indexed block in cache.
-    fn new_history<'a>(
+    /// Also drop stale blocks from cache - handling chain reorgs.
+    fn sync_history<'a>(
         &self,
         chain: &'a IndexedChain,
     ) -> Result<Vec<(ScriptHash, BTreeSet<Location<'a>>)>, Error> {
+        self.drop_stale_blocks(chain)?;
+        // Collect latest block height & its corresponding blockhash for each scripthash.
         let mut stmt = self.db.prepare(
             r"
             WITH max_heights AS (
@@ -165,7 +169,7 @@ impl Cache {
             };
             Ok((script_hash, latest_header))
         })?;
-        // Collect new transactions' locations:
+        // Collect new transactions' locations per scripthash (sorted by txnum)
         rows_iter
             .map(|row| {
                 let (script_hash, latest_header) = row?;

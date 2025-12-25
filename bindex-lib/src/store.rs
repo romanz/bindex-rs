@@ -250,6 +250,7 @@ impl IndexedChain {
             .map(index::IndexedHeader::header)
     }
 
+    /// Make sure this header has been indexed.
     pub fn check_header(
         &self,
         hash: bitcoin::BlockHash,
