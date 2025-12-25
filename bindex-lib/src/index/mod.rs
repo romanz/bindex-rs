@@ -3,9 +3,10 @@ mod scripthash;
 mod txid;
 mod txpos;
 
-use bitcoin::{hashes::sha256d, BlockHash};
-
-use crate::headers::Headers;
+use bitcoin::{
+    hashes::{sha256d, Hash},
+    BlockHash,
+};
 
 pub use header::IndexedHeader;
 pub use scripthash::ScriptHash;
@@ -193,11 +194,11 @@ pub struct IndexBuilder {
 }
 
 impl IndexBuilder {
-    pub fn new(chain: &Headers) -> Self {
+    pub fn new(tip: Option<&header::IndexedHeader>) -> Self {
         Self {
-            next_txnum: chain.next_txnum(),
             batches: vec![],
-            tip: chain.tip_hash(),
+            next_txnum: tip.map_or_else(TxNum::default, |header| header.next_txnum()),
+            tip: tip.map_or_else(bitcoin::BlockHash::all_zeros, |header| header.hash()),
         }
     }
 

@@ -120,7 +120,7 @@ impl IndexedChain {
             .expect("cannot drop tip of an empty chain");
         // "Re-index" stale block in order to delete its entries from the DB
         let stale_hash = stale.hash();
-        let mut builder = index::IndexBuilder::new(&self.headers);
+        let mut builder = index::IndexBuilder::new(self.headers.tip());
         builder.add(
             stale_hash,
             &self.client.get_block_bytes(stale_hash)?,
@@ -163,7 +163,7 @@ impl IndexedChain {
 
         let headers = self.fetch_new_headers(limit)?;
 
-        let mut builder = index::IndexBuilder::new(&self.headers);
+        let mut builder = index::IndexBuilder::new(self.headers.tip());
         for header in headers {
             let blockhash = header.block_hash();
             if self.headers.tip_hash() == blockhash {

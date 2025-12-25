@@ -39,19 +39,26 @@ impl Headers {
         self.rows.len().checked_sub(1)
     }
 
+    /// TxNum of the next transaction to be indexed (also the total number of indexed transactions).
     pub fn next_txnum(&self) -> index::TxNum {
         self.rows
             .last()
             .map_or_else(index::TxNum::default, index::IndexedHeader::next_txnum)
     }
 
-    pub fn add(&mut self, row: index::IndexedHeader) {
-        assert_eq!(row.header().prev_blockhash, self.tip_hash());
-        self.rows.push(row)
+    /// Add new tip.
+    pub fn add(&mut self, tip: index::IndexedHeader) {
+        assert_eq!(tip.header().prev_blockhash, self.tip_hash());
+        self.rows.push(tip)
     }
 
+    /// Pop current tip.
     pub fn pop(&mut self) -> Option<index::IndexedHeader> {
         self.rows.pop()
+    }
+
+    pub fn tip(&self) -> Option<&index::IndexedHeader> {
+        self.rows.last()
     }
 
     pub fn genesis(&self) -> Option<&index::IndexedHeader> {
