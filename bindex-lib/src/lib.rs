@@ -20,6 +20,12 @@ pub struct Location<'a> {
     indexed_header: &'a index::IndexedHeader,
 }
 
+impl Location<'_> {
+    pub fn blockhash(&self) -> bitcoin::BlockHash {
+        self.indexed_header.hash()
+    }
+}
+
 impl Ord for Location<'_> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.txnum.cmp(&other.txnum)
