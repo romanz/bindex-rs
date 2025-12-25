@@ -13,7 +13,6 @@ use std::{
     path::{Path, PathBuf},
     process::{ChildStdin, ChildStdout, Command, Stdio},
     str::FromStr,
-    thread,
     time::Instant,
 };
 
@@ -288,7 +287,7 @@ fn run() -> Result<()> {
             }
             None => {
                 print_history(entries, args.history_limit);
-                thread::sleep(std::time::Duration::from_secs(1));
+                std::thread::sleep(std::time::Duration::from_secs(1));
                 if args.sync_once {
                     break;
                 }
