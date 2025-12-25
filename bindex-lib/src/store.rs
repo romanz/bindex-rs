@@ -166,9 +166,6 @@ impl IndexedChain {
         let mut builder = index::IndexBuilder::new(self.headers.tip());
         for header in headers {
             let blockhash = header.block_hash();
-            if self.headers.tip_hash() == blockhash {
-                continue; // skip first header from response
-            }
             // TODO: can be done concurrently
             let block_bytes = self.client.get_block_bytes(blockhash)?;
             let spent_bytes = self.client.get_spent_bytes(blockhash)?;
