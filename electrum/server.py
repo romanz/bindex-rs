@@ -353,7 +353,7 @@ class Mempool:
             self.next_seq = mempool_seq + 1
             stats[event] += 1
 
-        LOG.debug(
+        LOG.info(
             "handled %d events: %d txs, seq=%s (%.3fs) %s",
             len(messages),
             len(self.tx_entries),
