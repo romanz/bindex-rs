@@ -21,6 +21,18 @@ impl From<Network> for bitcoin::Network {
     }
 }
 
+impl From<bitcoin::Network> for Network {
+    fn from(value: bitcoin::Network) -> Self {
+        match value {
+            bitcoin::Network::Bitcoin => Network::Bitcoin,
+            bitcoin::Network::Testnet => Network::Testnet,
+            bitcoin::Network::Testnet4 => Network::Testnet4,
+            bitcoin::Network::Signet => Network::Signet,
+            bitcoin::Network::Regtest => Network::Regtest,
+        }
+    }
+}
+
 impl Network {
     pub fn default_rpc_port(&self) -> u16 {
         match self {
