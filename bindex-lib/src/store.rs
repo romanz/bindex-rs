@@ -106,9 +106,12 @@ impl IndexedChain {
         })
     }
 
-    pub fn open_default(db_path: &str, network: Network) -> Result<Self, Error> {
+    pub fn open_default(db_path: impl AsRef<Path>, network: Network) -> Result<Self, Error> {
         let bitcoin_network: bitcoin::Network = network.into();
-        let default_db_path = format!("{db_path}/{bitcoin_network}");
+        let default_db_path = db_path
+            .as_ref()
+            .to_path_buf()
+            .join(bitcoin_network.to_string());
         let default_rest_url = format!("http://localhost:{}", network.default_rpc_port());
         Self::open(default_db_path, default_rest_url)
     }
