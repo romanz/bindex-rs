@@ -9,6 +9,8 @@ mod index;
 mod network;
 mod store;
 
+pub use headers::Headers;
+pub use index::ScriptHash;
 pub use network::Network;
 pub use store::IndexedChain;
 
@@ -21,8 +23,12 @@ pub struct Location<'a> {
 }
 
 impl Location<'_> {
-    pub fn blockhash(&self) -> bitcoin::BlockHash {
+    pub fn block_hash(&self) -> bitcoin::BlockHash {
         self.indexed_header.hash()
+    }
+
+    pub fn block_height(&self) -> usize {
+        self.block_height
     }
 }
 
