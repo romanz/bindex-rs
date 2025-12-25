@@ -301,6 +301,12 @@ class Mempool:
             time.time() - t,
         )
 
+    def get_zmq_message(self) -> tuple | None:
+        try:
+            return self.zmq_messages.get_nowait()
+        except asyncio.QueueEmpty:
+            return None
+
     async def update(self) -> MempoolUpdate:
         t = time.time()
         result = MempoolUpdate(scripthashes=set(), new_tip=False)
@@ -308,8 +314,7 @@ class Mempool:
         # Handle a batch of ZMQ messages (without blocking)
         # If a block is found, drop all previous mempool events (since we'll resync mempool anyway)
         messages = []
-        for _ in range(self.zmq_messages.qsize()):
-            (event, hash_hex, mempool_seq) = self.zmq_messages.get_nowait()
+        for event, hash_hex, mempool_seq in iter(self.get_zmq_message, None):
             if event in (Event.BLOCK_CONNECT, Event.BLOCK_DISCONNECT):
                 LOG.info("block %s event [%s]", hash_hex, chr(event))
                 # resync mempool after new/stale block
