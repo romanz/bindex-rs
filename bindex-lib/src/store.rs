@@ -246,19 +246,7 @@ impl IndexedChain {
             .get_block_part(location.indexed_header.hash(), pos)?)
     }
 
-    /// Iterate over block headers.
-    pub fn iter_headers(&self) -> impl Iterator<Item = &bitcoin::block::Header> {
-        self.headers
-            .iter_headers()
-            .map(index::IndexedHeader::header)
-    }
-
-    /// Make sure this header has been indexed.
-    pub fn check_header(
-        &self,
-        hash: bitcoin::BlockHash,
-        height: usize,
-    ) -> Result<&index::IndexedHeader, Error> {
-        Ok(self.headers.get_header(hash, height)?)
+    pub fn headers(&self) -> &headers::Headers {
+        &self.headers
     }
 }

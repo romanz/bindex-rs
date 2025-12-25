@@ -116,9 +116,10 @@ impl Cache {
         })?;
         let mut delete_from = None;
         // Find the first non-stale block (scanning backwards from tip):
+        let headers = chain.headers();
         for row in rows_iter {
             let (hash, height) = row?;
-            match chain.check_header(hash, height) {
+            match headers.get_header(hash, height) {
                 Ok(_header) => break,
                 Err(err) => {
                     warn!("reorg detected: {}", err);
@@ -155,14 +156,16 @@ impl Cache {
             SELECT script_hash, block_height, block_hash
             FROM max_heights LEFT JOIN headers USING (block_height)",
         )?;
+        let headers = chain.headers();
         let rows_iter = stmt.query_map([], |row| {
             let script_hash = ScriptHash::from_byte_array(row.get(0)?);
             let block_height: Option<usize> = row.get(1)?;
             let latest_header = if let Some(height) = block_height {
                 let block_hash = bitcoin::BlockHash::from_byte_array(row.get(2)?);
-                let header = chain
-                    .check_header(block_hash, height)
-                    .expect("unexpected reorg");
+                // Stale blocks should be removed by `drop_stale_blocks` call above.
+                let header = headers
+                    .get_header(block_hash, height)
+                    .expect("unexpected stale block");
                 Some(header)
             } else {
                 None
