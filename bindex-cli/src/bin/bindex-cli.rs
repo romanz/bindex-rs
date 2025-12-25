@@ -1,8 +1,6 @@
 use bindex::{
     bitcoin::{self, consensus::deserialize, hashes::Hash, BlockHash, Txid},
-    cache,
-    network::Network,
-    IndexedChain,
+    cache, IndexedChain, Network,
 };
 use chrono::{TimeZone, Utc};
 use clap::Parser;

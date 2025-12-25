@@ -1,14 +1,15 @@
 pub use bitcoin;
 
 pub mod cache;
-pub mod network;
 
 mod client;
 mod db;
 mod headers;
 mod index;
+mod network;
 mod store;
 
+pub use network::Network;
 pub use store::IndexedChain;
 
 #[derive(PartialEq, Eq, PartialOrd, Clone, Copy, Debug)]
