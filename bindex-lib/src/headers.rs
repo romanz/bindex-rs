@@ -26,7 +26,7 @@ impl Headers {
         Self { rows }
     }
 
-    /// Return tip block hash (or zeroes if no blocks).
+    /// Return tip block hash (or `all_zeros` if no blocks).
     pub fn tip_hash(&self) -> bitcoin::BlockHash {
         self.rows
             .last()

@@ -118,12 +118,16 @@ impl IndexedChain {
             .headers
             .pop()
             .expect("cannot drop tip of an empty chain");
-        let block_bytes = self.client.get_block_bytes(stale.hash())?;
-        let spent_bytes = self.client.get_spent_bytes(stale.hash())?;
+        // "Re-index" stale block in order to delete its entries from the DB
+        let stale_hash = stale.hash();
         let mut builder = index::IndexBuilder::new(&self.headers);
-        builder.add(stale.hash(), &block_bytes, &spent_bytes)?;
+        builder.add(
+            stale_hash,
+            &self.client.get_block_bytes(stale_hash)?,
+            &self.client.get_spent_bytes(stale_hash)?,
+        )?;
         self.store.delete(&builder.into_batches())?;
-        Ok(stale.hash())
+        Ok(stale_hash)
     }
 
     fn fetch_new_headers(
@@ -146,10 +150,13 @@ impl IndexedChain {
                 blockhash,
                 self.headers.tip_height().unwrap(),
             );
+            // drop stale tip and retry fetching
             assert_eq!(blockhash, self.drop_tip()?);
         }
     }
 
+    /// Synchornize index with bitcoind.
+    /// Compactions are started when no new blocks are indexed.
     pub fn sync_chain(&mut self, limit: usize) -> Result<Stats, Error> {
         let mut stats = Stats::new(self.headers.tip_hash());
         let t = std::time::Instant::now();
@@ -199,6 +206,8 @@ impl IndexedChain {
         Ok(stats)
     }
 
+    /// Collect transactions' locations spending/funding this scripthash.
+    /// False-positive may occur, so post-filtering should be applied.
     pub fn locations_by_scripthash(
         &self,
         script_hash: &index::ScriptHash,
@@ -214,6 +223,8 @@ impl IndexedChain {
             .map(|txnum| self.headers.find_by_txnum(txnum)))
     }
 
+    /// Collect transactions' locations matching this txid.
+    /// False-positive may occur, so post-filtering should be applied.
     pub fn locations_by_txid(
         &self,
         txid: &bitcoin::Txid,
