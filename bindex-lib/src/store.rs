@@ -33,6 +33,7 @@ pub enum Error {
     BlockNotFound(#[from] headers::Reorg),
 }
 
+#[derive(Debug)]
 pub struct Stats {
     pub tip: bitcoin::BlockHash,
     pub indexed_blocks: usize,
