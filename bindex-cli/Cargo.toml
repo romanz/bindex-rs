@@ -13,7 +13,7 @@ readme = "../README.md"
 
 
 [dependencies]
-bindex = { path = "../bindex-lib" }
+bindex = { path = "../bindex-lib", features = ["cache"] }
 chrono = { version = "0.4", default-features = false }
 clap = { version = "4", features = ["derive"] }
 env_logger = "0.11"

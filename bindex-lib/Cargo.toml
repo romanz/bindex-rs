@@ -11,6 +11,8 @@ keywords = ["bitcoin", "index", "database"]
 documentation = "https://docs.rs/bindex/"
 readme = "../README.md"
 
+[features]
+cache = ["dep:rusqlite"]
 
 [dependencies]
 bitcoin = { version = "0.32", default-features = false }
@@ -21,7 +23,7 @@ log = "0.4"
 rocksdb = { version = "0.23", default-features = false, features = ["zstd"]}
 thiserror = "2.0"
 ureq = { version = "3", default-features = false }
-rusqlite = "0.37"
+rusqlite = { version = "0.37", optional = true }
 
 [dev-dependencies]
 hex_lit = "0.1"

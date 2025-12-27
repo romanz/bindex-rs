@@ -23,9 +23,6 @@ pub enum Error {
     #[error("Genesis block hash mismatch: {0} != {1}")]
     ChainMismatch(bitcoin::BlockHash, bitcoin::BlockHash),
 
-    #[error("rusqlite failed: {0}")]
-    Sqlite(#[from] rusqlite::Error),
-
     #[error("invalid address: {0}")]
     Address(#[from] bitcoin::address::ParseError),
 

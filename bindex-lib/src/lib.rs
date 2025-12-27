@@ -1,5 +1,6 @@
 pub use bitcoin;
 
+#[cfg(feature = "cache")]
 pub mod cache;
 
 mod chain;
