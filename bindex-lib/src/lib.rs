@@ -2,17 +2,17 @@ pub use bitcoin;
 
 pub mod cache;
 
+mod chain;
 mod client;
 mod db;
 mod headers;
 mod index;
 mod network;
-mod store;
 
+pub use chain::IndexedChain;
 pub use headers::Headers;
 pub use index::ScriptHash;
 pub use network::Network;
-pub use store::IndexedChain;
 
 #[derive(PartialEq, Eq, PartialOrd, Clone, Copy, Debug)]
 pub struct Location<'a> {

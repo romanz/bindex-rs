@@ -10,8 +10,8 @@ use log::*;
 use rusqlite::OptionalExtension;
 
 use crate::{
+    chain::{self, IndexedChain},
     index::{self, ScriptHash},
-    store::{self, IndexedChain},
     Location,
 };
 
@@ -23,8 +23,8 @@ pub enum Error {
     #[error("invalid address: {0}")]
     Address(#[from] bitcoin::address::ParseError),
 
-    #[error("store error: {0}")]
-    Index(#[from] store::Error),
+    #[error("chain error: {0}")]
+    Index(#[from] chain::Error),
 }
 
 pub struct Cache {

@@ -266,7 +266,7 @@ fn run() -> Result<()> {
             .ok_or("Electrum requires setting a cache file")?;
         server = Some(Electrum::start(&cache_file, args.network.into())?);
     }
-    let mut index = IndexedChain::open_default(&args.db_path, args.network)?;
+    let mut index = IndexedChain::open(&args.db_path, args.network)?;
     loop {
         // index new blocks (also handle reorgs)
         let tip = loop {

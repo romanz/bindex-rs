@@ -44,3 +44,9 @@ impl Network {
         }
     }
 }
+
+impl std::fmt::Display for Network {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        bitcoin::Network::from(*self).fmt(f)
+    }
+}

@@ -62,9 +62,10 @@ pub struct IndexedChain {
 impl IndexedChain {
     /// Open an existing DB, or create if missing.
     /// Use binary format REST API for fetching the data from bitcoind.
-    pub fn open(db_path: impl AsRef<Path>, url: impl Into<String>) -> Result<Self, Error> {
-        let db_path = db_path.as_ref();
-        let url = url.into();
+    pub fn open(db_path: impl AsRef<Path>, network: Network) -> Result<Self, Error> {
+        let db_path = db_path.as_ref().to_path_buf().join(network.to_string());
+        let url = format!("http://localhost:{}", network.default_rpc_port());
+
         info!("index DB: {:?}, node URL: {}", db_path, url);
         let agent = ureq::Agent::new_with_config(
             ureq::config::Config::builder()
@@ -105,16 +106,6 @@ impl IndexedChain {
             client,
             store,
         })
-    }
-
-    pub fn open_default(db_path: impl AsRef<Path>, network: Network) -> Result<Self, Error> {
-        let bitcoin_network: bitcoin::Network = network.into();
-        let default_db_path = db_path
-            .as_ref()
-            .to_path_buf()
-            .join(bitcoin_network.to_string());
-        let default_rest_url = format!("http://localhost:{}", network.default_rpc_port());
-        Self::open(default_db_path, default_rest_url)
     }
 
     fn drop_tip(&mut self) -> Result<bitcoin::BlockHash, Error> {
