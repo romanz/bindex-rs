@@ -1,10 +1,10 @@
 use std::fmt::Debug;
 use std::{path::Path, time::Duration};
 
-use bitcoin::hashes::Hash;
+use bitcoin::{hashes::Hash, Network};
 use log::*;
 
-use crate::{client, db, headers, index, network::Network, Location};
+use crate::{client, db, headers, index, Location};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -61,7 +61,7 @@ impl IndexedChain {
     /// Use binary format REST API for fetching the data from bitcoind.
     pub fn open(db_path: impl AsRef<Path>, network: Network) -> Result<Self, Error> {
         let db_path = db_path.as_ref().to_path_buf().join(network.to_string());
-        let url = format!("http://localhost:{}", network.default_rpc_port());
+        let url = format!("http://localhost:{}", default_rpc_port(network));
 
         info!("index DB: {:?}, node URL: {}", db_path, url);
         let agent = ureq::Agent::new_with_config(
@@ -237,5 +237,15 @@ impl IndexedChain {
 
     pub fn headers(&self) -> &headers::Headers {
         &self.headers
+    }
+}
+
+fn default_rpc_port(nework: Network) -> u16 {
+    match nework {
+        Network::Bitcoin => 8332,
+        Network::Testnet => 18332,
+        Network::Testnet4 => 48332,
+        Network::Signet => 38332,
+        Network::Regtest => 18443,
     }
 }

@@ -17,7 +17,6 @@ cache = ["dep:rusqlite"]
 [dependencies]
 bitcoin = { version = "0.32", default-features = false }
 bitcoin_slices = { version = "0.10", features = ["bitcoin"] }
-clap = { version = "4", features = ["derive"] }
 hex = "0.4"
 log = "0.4"
 thiserror = "2.0"

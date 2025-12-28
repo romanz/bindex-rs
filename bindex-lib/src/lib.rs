@@ -8,12 +8,10 @@ mod client;
 mod db;
 mod headers;
 mod index;
-mod network;
 
 pub use chain::IndexedChain;
 pub use headers::Headers;
 pub use index::ScriptHash;
-pub use network::Network;
 
 #[derive(PartialEq, Eq, PartialOrd, Clone, Copy, Debug)]
 pub struct Location<'a> {

@@ -101,7 +101,6 @@ version = "0.0.16"
 dependencies = [
  "bitcoin",
  "bitcoin_slices",
- "clap",
  "hex",
  "hex_lit",
  "log",

@@ -1,9 +1,9 @@
 use bindex::{
-    bitcoin::{self, consensus::deserialize, hashes::Hash, Txid},
-    cache, IndexedChain, Network,
+    bitcoin::{self, consensus::deserialize, hashes::Hash, Network, Txid},
+    cache, IndexedChain,
 };
 use chrono::{TimeZone, Utc};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use log::*;
 use std::{
     collections::HashSet,
@@ -151,6 +151,32 @@ fn print_history(mut entries: Vec<Entry>, history_limit: usize) {
     }
 }
 
+#[derive(Clone, Copy)]
+struct NetworkArg(Network);
+
+impl ValueEnum for NetworkArg {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[
+            NetworkArg(Network::Bitcoin),
+            NetworkArg(Network::Testnet),
+            NetworkArg(Network::Testnet4),
+            NetworkArg(Network::Signet),
+            NetworkArg(Network::Regtest),
+        ]
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        let name = self.0.to_string();
+        Some(name.into())
+    }
+}
+
+impl From<NetworkArg> for Network {
+    fn from(value: NetworkArg) -> Self {
+        value.0
+    }
+}
+
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 /// Bitcoin address indexer
@@ -158,8 +184,8 @@ struct Args {
     #[arg(long = "db-path")]
     db_path: String,
 
-    #[arg(value_enum, short = 'n', long = "network", default_value_t = Network::Bitcoin)]
-    network: Network,
+    #[arg(value_enum, short = 'n', long = "network")]
+    network: NetworkArg,
 
     /// Limit on how many recent transactions to print
     #[arg(short = 'l', long = "limit", default_value_t = 0)]
@@ -210,7 +236,7 @@ fn run() -> Result<()> {
     let cache = cache::Cache::open(cache_db)?;
     cache.add(collect_addresses(&args)?)?;
 
-    let mut index = IndexedChain::open(&args.db_path, args.network)?;
+    let mut index = IndexedChain::open(&args.db_path, args.network.into())?;
     loop {
         // index new blocks (also handle reorgs)
         while index.sync_chain(1000)?.indexed_blocks > 0 {}
