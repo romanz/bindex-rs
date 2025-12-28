@@ -18,7 +18,7 @@ pub enum Error {
     Index(#[from] index::Error),
 
     #[error("RocksDB failed: {0}")]
-    RocksDB(#[from] rocksdb::Error),
+    RocksDB(#[from] rust_rocksdb::Error),
 
     #[error("Genesis block hash mismatch: {0} != {1}")]
     ChainMismatch(bitcoin::BlockHash, bitcoin::BlockHash),

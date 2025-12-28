@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::index::{self, TxBlockPosRow};
 
 use log::*;
+use rust_rocksdb as rocksdb;
 
 /// Key-value database
 pub struct DB {
