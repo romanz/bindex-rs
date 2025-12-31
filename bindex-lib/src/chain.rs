@@ -149,7 +149,7 @@ impl IndexedChain {
 
     /// Synchornize index with bitcoind.
     /// Compactions are started when no new blocks are indexed.
-    pub fn sync_chain(&mut self, limit: usize) -> Result<Stats, Error> {
+    pub fn sync(&mut self, limit: usize) -> Result<Stats, Error> {
         let mut stats = Stats::new(self.headers.tip_hash());
         let t = std::time::Instant::now();
 

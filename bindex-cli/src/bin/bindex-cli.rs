@@ -236,12 +236,12 @@ fn run() -> Result<()> {
     let cache = cache::Cache::open(cache_db)?;
     cache.add(collect_addresses(&args)?)?;
 
-    let mut index = IndexedChain::open(&args.db_path, args.network.into())?;
+    let mut chain = IndexedChain::open(&args.db_path, args.network.into())?;
     loop {
         // index new blocks (also handle reorgs)
-        while index.sync_chain(1000)?.indexed_blocks > 0 {}
+        while chain.sync(1000)?.indexed_blocks > 0 {}
         // make sure to update new scripthashes (even if there are no new blocks)
-        cache.sync(&index)?;
+        cache.sync(&chain)?;
         print_history(get_history(cache.db())?, args.history_limit);
         std::thread::sleep(std::time::Duration::from_secs(1));
         if args.sync_once {
