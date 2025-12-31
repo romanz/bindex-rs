@@ -184,7 +184,7 @@ struct Args {
     #[arg(long = "db-path")]
     db_path: String,
 
-    #[arg(value_enum, short = 'n', long = "network")]
+    #[arg(value_enum, short = 'n', long = "network", default_value_t = NetworkArg(Network::Bitcoin))]
     network: NetworkArg,
 
     /// Limit on how many recent transactions to print
