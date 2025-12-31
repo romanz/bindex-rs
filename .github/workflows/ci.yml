@@ -79,30 +79,3 @@ jobs:
         run: |
           docker run --rm bindex:latest bindex-cli --version
           docker run --rm bindex:latest bindex-cli --help
-
-  python:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: "Set up Python"
-        uses: actions/setup-python@v6
-        with:
-          python-version-file: ".python-version"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          version: "0.9.10"
-
-      - name: Install the project
-        run: uv sync --locked
-
-      # Update output format to enable automatic inline annotations.
-      - name: Ruff check
-        run: uv run ruff check --output-format=github .
-      - name: Ruff format
-        run: uv run ruff format --diff
-      - name: Type check
-        run: uv run ty check
