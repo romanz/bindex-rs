@@ -228,21 +228,27 @@ fn collect_addresses(args: &Args) -> Result<HashSet<bitcoin::Address>> {
 fn run() -> Result<()> {
     let args = Args::parse();
     env_logger::builder().format_timestamp_micros().init();
+
+    let mut chain = IndexedChain::open(&args.db_path, args.network.into())?;
+    let mut tip = chain.headers().tip_hash();
+
     let cache_db = rusqlite::Connection::open(Path::new(match args.cache_file {
         Some(ref p) => p.as_path(),
         None => Path::new(":memory:"),
     }))?;
-
     let cache = cache::Cache::open(cache_db)?;
+    print_history(get_history(cache.db())?, args.history_limit);
     cache.add(collect_addresses(&args)?)?;
 
-    let mut chain = IndexedChain::open(&args.db_path, args.network.into())?;
     loop {
         // index new blocks (also handle reorgs)
         while chain.sync(1000)?.indexed_blocks > 0 {}
         // make sure to update new scripthashes (even if there are no new blocks)
         cache.sync(&chain)?;
-        print_history(get_history(cache.db())?, args.history_limit);
+        if tip != chain.headers().tip_hash() {
+            print_history(get_history(cache.db())?, args.history_limit);
+            tip = chain.headers().tip_hash();
+        }
         std::thread::sleep(std::time::Duration::from_secs(1));
         if args.sync_once {
             break;
