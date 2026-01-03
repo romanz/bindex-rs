@@ -74,12 +74,19 @@ impl IndexedChain {
         let genesis_block = client.get_block_bytes(genesis_hash)?;
 
         // make sure bitcoind supports the required REST API endpoints
+        // * /rest/getspenttxouts/ (added in https://github.com/bitcoin/bitcoin/pull/32540)
         match client.get_spent_bytes(genesis_hash) {
             Err(client::Error::Http(ureq::Error::StatusCode(404))) => Err(Error::NotSupported)?,
             res => res?,
         };
-        let size = genesis_block.len().try_into().unwrap();
-        let txpos = index::TxBlockPos { offset: 0, size };
+        // * /rest/blockpart/ (added in https://github.com/bitcoin/bitcoin/pull/33657)
+        let txpos = index::TxBlockPos {
+            offset: 0,
+            size: genesis_block
+                .len()
+                .try_into()
+                .expect("too large genesis block"),
+        };
         match client.get_block_part(genesis_hash, txpos) {
             Err(client::Error::Http(ureq::Error::StatusCode(404))) => Err(Error::NotSupported)?,
             res => assert_eq!(index::BlockBytes::new(res?), genesis_block),
