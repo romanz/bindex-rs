@@ -1,5 +1,8 @@
 use std::fmt::Debug;
-use std::{path::Path, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use bitcoin::{hashes::Hash, Network};
 use log::*;
@@ -56,20 +59,29 @@ pub struct IndexedChain {
     store: db::DB,
 }
 
+#[derive(Debug)]
+pub struct Config {
+    db_path: PathBuf,
+    url: String,
+}
+
 impl IndexedChain {
     /// Open an existing DB, or create if missing.
     /// Use binary format REST API for fetching the data from bitcoind.
-    pub fn open(db_path: impl AsRef<Path>, network: Network) -> Result<Self, Error> {
-        let db_path = db_path.as_ref().to_path_buf().join(network.to_string());
+    pub fn open(db_dir: impl AsRef<Path>, network: Network) -> Result<Self, Error> {
+        let db_path = db_dir.as_ref().to_path_buf().join(network.to_string());
         let url = format!("http://localhost:{}", default_rpc_port(network));
+        Self::from_config(Config { db_path, url })
+    }
 
-        info!("index DB: {:?}, node URL: {}", db_path, url);
+    fn from_config(config: Config) -> Result<Self, Error> {
+        info!("index: {:?}", config);
         let agent = ureq::Agent::new_with_config(
             ureq::config::Config::builder()
                 .max_response_header_size(usize::MAX) // Disabled as a workaround
                 .build(),
         );
-        let client = client::Client::new(agent, url);
+        let client = client::Client::new(agent, config.url);
         let genesis_hash = client.get_blockhash_by_height(0)?;
         let genesis_block = client.get_block_bytes(genesis_hash)?;
 
@@ -92,7 +104,7 @@ impl IndexedChain {
             res => assert_eq!(index::BlockBytes::new(res?), genesis_block),
         };
 
-        let store = db::DB::open(db_path)?;
+        let store = db::DB::open(config.db_path)?;
         let headers = headers::Headers::new(store.headers()?);
         if let Some(indexed_genesis) = headers.genesis() {
             if indexed_genesis.hash() != genesis_hash {
