@@ -268,3 +268,112 @@ fn default_rpc_port(nework: Network) -> u16 {
         Network::Regtest => 18443,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bitcoin::{consensus::deserialize, Amount, Transaction};
+    use corepc_node::{exe_path, Conf, Node};
+
+    #[test]
+    fn test_chain_bitcoind() -> Result<(), Box<dyn std::error::Error>> {
+        let mut conf = Conf::default();
+        conf.args.push("-rest");
+
+        let node = Node::with_conf(exe_path().unwrap(), &conf).unwrap();
+
+        let get_tip = || {
+            node.client
+                .get_best_block_hash()
+                .unwrap()
+                .block_hash()
+                .unwrap()
+        };
+        let addr = node.client.new_address().unwrap();
+
+        const BLOCKS: usize = 101; // so that the first coinbase will be spendable
+        node.client.generate_to_address(BLOCKS, &addr).unwrap();
+
+        let dir = tempfile::TempDir::with_prefix("bindex_db").unwrap();
+        let config = Config {
+            db_path: dir.path().to_path_buf(),
+            url: format!("http://{}", node.params.rpc_socket),
+        };
+        let mut chain = IndexedChain::from_config(config).unwrap();
+        let stats = chain.sync(1000).unwrap();
+        assert_eq!(stats.indexed_blocks, BLOCKS + 1);
+        assert_eq!(stats.tip, get_tip());
+
+        let addr1 = node.client.new_address().unwrap();
+        let addr2 = node.client.new_address().unwrap();
+
+        let txid1 = node
+            .client
+            .send_to_address(&addr1, Amount::from_int_btc(20))
+            .unwrap()
+            .txid()
+            .unwrap();
+        let tx1 = node
+            .client
+            .get_raw_transaction(txid1)
+            .unwrap()
+            .transaction()
+            .unwrap();
+        let txid2 = node
+            .client
+            .send_to_address(&addr2, Amount::from_int_btc(40))
+            .unwrap()
+            .txid()
+            .unwrap();
+        let tx2 = node
+            .client
+            .get_raw_transaction(txid2)
+            .unwrap()
+            .transaction()
+            .unwrap();
+        node.client.generate_to_address(1, &addr).unwrap();
+        assert_eq!(node.client.get_mempool_info().unwrap().size, 0);
+
+        let stats = chain.sync(1000).unwrap();
+        assert_eq!(stats.indexed_blocks, 1);
+        assert_eq!(stats.tip, get_tip());
+        let stats = chain.sync(1000).unwrap();
+        assert_eq!(stats.indexed_blocks, 0);
+        assert_eq!(stats.tip, get_tip());
+
+        let loc1 = exactly_one(chain.locations_by_txid(&txid1).unwrap());
+        assert_eq!(loc1.block_height, BLOCKS + 1);
+        let tx_bytes = chain.get_tx_bytes(&loc1).unwrap();
+        assert_eq!(deserialize::<Transaction>(&tx_bytes).unwrap(), tx1);
+
+        let loc2 = exactly_one(chain.locations_by_txid(&txid2).unwrap());
+        assert_eq!(loc1.block_height, BLOCKS + 1);
+        let tx_bytes = chain.get_tx_bytes(&loc2).unwrap();
+        assert_eq!(deserialize::<Transaction>(&tx_bytes).unwrap(), tx2);
+
+        let txs: Vec<_> = chain
+            .locations_by_scripthash(&index::ScriptHash::new(&addr.script_pubkey()), None)
+            .unwrap()
+            .collect();
+        assert_eq!(txs.len(), BLOCKS + 2);
+
+        let locations: Vec<_> = chain
+            .locations_by_scripthash(&index::ScriptHash::new(&addr1.script_pubkey()), None)
+            .unwrap()
+            .collect();
+        assert_eq!(locations, vec![loc1, loc2]);
+
+        let locations: Vec<_> = chain
+            .locations_by_scripthash(&index::ScriptHash::new(&addr2.script_pubkey()), None)
+            .unwrap()
+            .collect();
+        assert_eq!(locations, vec![loc2]);
+        Ok(())
+    }
+
+    fn exactly_one<T>(mut iter: impl Iterator<Item = T>) -> T {
+        let res = iter.next().unwrap();
+        assert!(iter.next().is_none());
+        res
+    }
+}

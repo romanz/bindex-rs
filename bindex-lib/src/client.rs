@@ -109,3 +109,82 @@ impl Client {
         self.get_bytes(&url)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bitcoin::{consensus::serialize, hashes::Hash};
+    use corepc_node::{exe_path, Conf, Node};
+    use ureq::Agent;
+
+    #[test]
+    fn test_client_bitcoind() {
+        let mut conf = Conf::default();
+        conf.args.push("-rest");
+        const BLOCKS: usize = 10;
+
+        let node = Node::with_conf(exe_path().unwrap(), &conf).unwrap();
+        let addr = node.client.new_address().unwrap();
+        node.client.generate_to_address(BLOCKS, &addr).unwrap();
+
+        let client = Client::new(Agent::new_with_defaults(), node.rpc_url());
+        for i in 0..=BLOCKS {
+            let hash = client.get_blockhash_by_height(i).unwrap();
+            let block = client.get_block_bytes(hash).unwrap();
+            let _spent = client.get_spent_bytes(hash).unwrap();
+            let block_size = block.len().try_into().unwrap();
+            let block_bytes = client
+                .get_block_part(
+                    hash,
+                    index::TxBlockPos {
+                        offset: 0,
+                        size: block_size,
+                    },
+                )
+                .unwrap();
+            assert_eq!(block, index::BlockBytes::new(block_bytes));
+
+            assert!(client
+                .get_block_part(
+                    hash,
+                    index::TxBlockPos {
+                        offset: 0,
+                        size: block_size + 1
+                    }
+                )
+                .is_err());
+            assert!(client
+                .get_block_part(
+                    BlockHash::all_zeros(),
+                    index::TxBlockPos {
+                        offset: 0,
+                        size: block_size
+                    }
+                )
+                .is_err());
+
+            let header_bytes = client
+                .get_block_part(
+                    hash,
+                    index::TxBlockPos {
+                        offset: 0,
+                        size: 80,
+                    },
+                )
+                .unwrap();
+            let headers = client.get_headers(hash, 0).unwrap();
+            let expected = node
+                .client
+                .get_block_header(&hash)
+                .unwrap()
+                .block_header()
+                .unwrap();
+
+            assert_eq!(headers, vec![expected]);
+            assert_eq!(serialize(&expected), header_bytes);
+        }
+
+        assert!(client.get_block_bytes(BlockHash::all_zeros()).is_err());
+        assert!(client.get_spent_bytes(BlockHash::all_zeros()).is_err());
+    }
+}

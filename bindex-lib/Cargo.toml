@@ -25,3 +25,6 @@ rust-rocksdb = { version = "0.36.0", default-features = false, features = ["zstd
 
 [dev-dependencies]
 hex_lit = "0.1"
+# bitcoind path should be specified via BITCOIND_EXE
+corepc-node = { version = "0.10", default-features = false, features = ["29_0"] }
+tempfile = "3"
