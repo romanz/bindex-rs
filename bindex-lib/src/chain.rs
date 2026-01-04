@@ -169,10 +169,11 @@ impl IndexedChain {
     /// Synchornize index with bitcoind.
     /// Compactions are started when no new blocks are indexed.
     pub fn sync(&mut self, limit: usize) -> Result<Stats, Error> {
-        let mut stats = Stats::new(self.headers.tip_hash());
         let t = std::time::Instant::now();
-
+        // get new headers (and drop stale ones if needed)
         let headers = self.fetch_new_headers(limit)?;
+        // start indexing from a valid tip
+        let mut stats = Stats::new(self.headers.tip_hash());
 
         let mut builder = index::IndexBuilder::new(self.headers.tip());
         for header in headers {
@@ -368,6 +369,33 @@ mod tests {
             .unwrap()
             .collect();
         assert_eq!(locations, vec![loc2]);
+
+        // check reorg
+        let old_tip = get_tip();
+        node.client.invalidate_block(old_tip).unwrap();
+        let stats = chain.sync(1000).unwrap();
+        assert!(old_tip != stats.tip);
+        assert_eq!(stats.indexed_blocks, 0);
+        assert_eq!(stats.tip, get_tip());
+
+        assert_eq!(chain.locations_by_txid(&txid1).unwrap().next(), None);
+        assert_eq!(chain.locations_by_txid(&txid2).unwrap().next(), None);
+        assert_eq!(
+            chain
+                .locations_by_scripthash(&index::ScriptHash::new(&addr1.script_pubkey()), None)
+                .unwrap()
+                .next(),
+            None,
+        );
+
+        assert_eq!(
+            chain
+                .locations_by_scripthash(&index::ScriptHash::new(&addr2.script_pubkey()), None)
+                .unwrap()
+                .next(),
+            None,
+        );
+
         Ok(())
     }
 
