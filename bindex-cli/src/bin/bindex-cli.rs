@@ -237,7 +237,7 @@ fn run() -> Result<()> {
         None => Path::new(":memory:"),
     }))?;
     let cache = cache::Cache::open(cache_db)?;
-    print_history(get_history(cache.db())?, args.history_limit);
+    let mut first = true;
     cache.add(collect_addresses(&args)?)?;
 
     loop {
@@ -245,7 +245,8 @@ fn run() -> Result<()> {
         while chain.sync(1000)?.indexed_blocks > 0 {}
         // make sure to update new scripthashes (even if there are no new blocks)
         cache.sync(&chain)?;
-        if tip != chain.headers().tip_hash() {
+        if tip != chain.headers().tip_hash() || first {
+            first = false;
             print_history(get_history(cache.db())?, args.history_limit);
             tip = chain.headers().tip_hash();
         }
