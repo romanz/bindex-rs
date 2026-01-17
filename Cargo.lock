@@ -115,7 +115,7 @@ checksum = "32637268377fc7b10a8c6d51de3e7fba1ce5dd371a96e342b34e6078db558e7f"
 
 [[package]]
 name = "bindex"
-version = "0.0.16"
+version = "0.0.17"
 dependencies = [
  "bitcoin",
  "bitcoin_slices",
@@ -131,7 +131,7 @@ dependencies = [
 
 [[package]]
 name = "bindex-cli"
-version = "0.0.16"
+version = "0.0.17"
 dependencies = [
  "bindex",
  "chrono",
