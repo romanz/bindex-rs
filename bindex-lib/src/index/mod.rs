@@ -103,6 +103,10 @@ impl HashPrefixRow {
         &self.key
     }
 
+    pub fn serialize(&self) -> (&[u8], &[u8]) {
+        (&self.key, b"")
+    }
+
     pub fn from_bytes(key: [u8; Self::LEN]) -> Self {
         Self { key }
     }
@@ -142,22 +146,51 @@ impl SpentBytes {
 }
 
 pub struct Batch {
-    pub scripthash_rows: Vec<HashPrefixRow>,
-    pub txid_rows: Vec<HashPrefixRow>,
-    pub txpos_rows: Vec<txpos::TxBlockPosRow>,
+    pub scripthash_rows: IndexedRows<HashPrefixRow>,
+    pub txid_rows: IndexedRows<HashPrefixRow>,
+    pub txpos_rows: IndexedRows<txpos::TxBlockPosRow>,
     pub header: IndexedHeader,
+}
+
+pub struct IndexedRows<R> {
+    new: Vec<R>, // will be added
+    old: Vec<R>, // will be removed
+}
+
+impl<R> IndexedRows<R> {
+    fn empty() -> Self {
+        Self {
+            new: vec![],
+            old: vec![],
+        }
+    }
+
+    pub fn from_new(rows: Vec<R>) -> Self {
+        Self {
+            new: rows,
+            old: vec![],
+        }
+    }
+
+    pub fn iter_new(&self) -> impl Iterator<Item = &R> {
+        self.new.iter()
+    }
+
+    pub fn iter_old(&self) -> impl Iterator<Item = &R> {
+        self.old.iter()
+    }
 }
 
 struct IndexedBlock<R> {
     next_txnum: TxNum,
-    rows: Vec<R>,
+    rows: IndexedRows<R>,
 }
 
 impl<R> IndexedBlock<R> {
-    fn new(next_txnum: TxNum) -> Self {
+    fn empty(txnum: TxNum) -> Self {
         Self {
-            next_txnum,
-            rows: vec![],
+            next_txnum: txnum,
+            rows: IndexedRows::empty(),
         }
     }
 }

@@ -13,6 +13,7 @@ impl bitcoin_slices::Visitor for IndexVisitor<'_> {
         let prefix = tx.txid().into();
         self.result
             .rows
+            .new
             .push(HashPrefixRow::new(prefix, self.result.next_txnum));
         self.result.next_txnum.increment();
         ControlFlow::Continue(())
@@ -20,7 +21,7 @@ impl bitcoin_slices::Visitor for IndexVisitor<'_> {
 }
 
 pub fn index(block: &BlockBytes, txnum: TxNum) -> Result<IndexedBlock<HashPrefixRow>, Error> {
-    let mut result = IndexedBlock::new(txnum);
+    let mut result = IndexedBlock::empty(txnum);
     let mut visitor = IndexVisitor {
         result: &mut result,
     };
