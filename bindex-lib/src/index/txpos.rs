@@ -1,5 +1,7 @@
 use std::ops::ControlFlow;
 
+use crate::index::IndexedRows;
+
 use super::{BlockBytes, Error, IndexedBlock, TxNum};
 use bitcoin::consensus::{Decodable, Encodable};
 use bitcoin_slices::{bsl, Visit as _};
@@ -203,7 +205,7 @@ pub fn index(block: &BlockBytes, txnum: TxNum) -> Result<IndexedBlock<TxBlockPos
     }
     Ok(IndexedBlock {
         next_txnum: visitor.tx_num,
-        rows: TxBlockPosRow::chunkify(&positions),
+        rows: IndexedRows::from_new(TxBlockPosRow::chunkify(&positions)),
     })
 }
 

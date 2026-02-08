@@ -115,9 +115,9 @@ pub fn index(
     spent: &SpentBytes,
     txnum: TxNum,
 ) -> Result<IndexedBlock<HashPrefixRow>, Error> {
-    let mut result = IndexedBlock::new(txnum);
-    let txnum1 = add_block_rows(block, txnum, &mut result.rows)?;
-    let txnum2 = add_spent_rows(spent, txnum, &mut result.rows)?;
+    let mut result = IndexedBlock::empty(txnum);
+    let txnum1 = add_block_rows(block, txnum, &mut result.rows.new)?;
+    let txnum2 = add_spent_rows(spent, txnum, &mut result.rows.new)?;
     assert_eq!(txnum1, txnum2);
     result.next_txnum = txnum1;
     Ok(result)
@@ -188,7 +188,8 @@ mod tests {
 
         assert_eq!(batch.header.next_txnum(), TxNum(14));
         assert_eq!(batch.header.hash(), block.block_hash());
-        assert_eq!(batch.scripthash_rows, [block_rows, spent_rows].concat());
+        assert_eq!(batch.scripthash_rows.new, [block_rows, spent_rows].concat());
+        assert_eq!(batch.scripthash_rows.old, []);
 
         Ok(())
     }

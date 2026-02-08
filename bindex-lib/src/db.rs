@@ -1,6 +1,6 @@
-use std::{iter::empty, path::Path};
+use std::path::Path;
 
-use crate::index::{self, IndexedHeader, TxBlockPosRow};
+use crate::index::{self, HashPrefixRow, IndexedRows, TxBlockPosRow};
 
 use log::*;
 use rust_rocksdb::{self as rocksdb, ColumnFamily};
@@ -58,27 +58,27 @@ struct Op {
 }
 
 impl<'a> Op {
-    fn apply<K, V>(
-        &mut self,
-        cf: &'a ColumnFamily,
-        new: impl Iterator<Item = (K, V)>,
-        old: impl Iterator<Item = (K, V)>,
-    ) where
+    fn apply<K, V>(&mut self, cf: &'a ColumnFamily, rows: IndexedRows<(K, V)>)
+    where
         K: AsRef<[u8]>,
         V: AsRef<[u8]>,
     {
         match self.op_type {
             OpType::Add => {
                 // delete old items
-                old.for_each(|(key, _value)| self.write_batch.delete_cf(cf, key));
+                rows.iter_old()
+                    .for_each(|(key, _value)| self.write_batch.delete_cf(cf, key));
                 // put new items
-                new.for_each(|(key, value)| self.write_batch.put_cf(cf, key, value));
+                rows.iter_new()
+                    .for_each(|(key, value)| self.write_batch.put_cf(cf, key, value));
             }
             OpType::Undo => {
                 // delete new items
-                new.for_each(|(key, _value)| self.write_batch.delete_cf(cf, key));
+                rows.iter_new()
+                    .for_each(|(key, _value)| self.write_batch.delete_cf(cf, key));
                 // put old items
-                old.for_each(|(key, value)| self.write_batch.put_cf(cf, key, value));
+                rows.iter_old()
+                    .for_each(|(key, value)| self.write_batch.put_cf(cf, key, value));
             }
         }
     }
@@ -125,30 +125,33 @@ impl DB {
         let cf = self.cf(SCRIPT_HASH_CF);
         let mut scripthash_rows = vec![];
         for batch in batches {
-            scripthash_rows.extend(batch.scripthash_rows.iter().map(index::HashPrefixRow::key));
+            let rows = &batch.scripthash_rows;
+            scripthash_rows.extend(rows.iter_new().map(HashPrefixRow::serialize));
         }
         scripthash_rows.sort_unstable();
-        op.apply(cf, scripthash_rows.into_iter().map(|k| (k, b"")), empty());
+        op.apply(cf, IndexedRows::from_new(scripthash_rows));
 
         // key = txid prefix || matching txnum, value = b""
         let cf = self.cf(TXID_CF);
         let mut txid_rows = vec![];
         for batch in batches {
-            txid_rows.extend(batch.txid_rows.iter().map(index::HashPrefixRow::key));
+            txid_rows.extend(batch.txid_rows.iter_new().map(HashPrefixRow::serialize));
         }
         txid_rows.sort_unstable();
-        op.apply(cf, txid_rows.into_iter().map(|k| (k, b"")), empty());
+        op.apply(cf, IndexedRows::from_new(txid_rows));
 
         // key = last_txnum, value = chunk of offsets
         let cf = self.cf(TXPOS_CF);
         // Rows are sorted by `txnum`.
-        let txpos_rows = batches.iter().flat_map(|batch| batch.txpos_rows.iter());
-        op.apply(cf, txpos_rows.map(index::TxBlockPosRow::serialize), empty());
+        let txpos_rows = batches
+            .iter()
+            .flat_map(|batch| batch.txpos_rows.iter_new().map(TxBlockPosRow::serialize));
+        op.apply(cf, IndexedRows::from_new(txpos_rows.collect()));
 
         // key = next_txnum, value = blockhash || blockheader
         let cf = self.cf(HEADERS_CF);
-        let headers = batches.iter().map(|b| &b.header);
-        op.apply(cf, headers.map(IndexedHeader::serialize), empty());
+        let headers = batches.iter().map(|b| b.header.serialize());
+        op.apply(cf, IndexedRows::from_new(headers.collect()));
 
         let opts = rocksdb::WriteOptions::default();
         self.db.write_opt(op.write_batch, &opts)?;
