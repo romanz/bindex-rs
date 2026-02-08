@@ -173,9 +173,10 @@ impl Batch {
         let txpos = txpos::index(block, txnum)?;
         let txid = txid::index(block, txnum)?;
 
-        // Both must have the same number of transactions
-        assert_eq!(scripthash.next_txnum, txpos.next_txnum);
+        // All must have the same number of transactions
         let txnum = txpos.next_txnum;
+        assert_eq!(txnum, scripthash.next_txnum);
+        assert_eq!(txnum, txid.next_txnum);
 
         let header = bitcoin::consensus::encode::deserialize(block.header())?;
         Ok(Batch {
