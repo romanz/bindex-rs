@@ -137,7 +137,7 @@ impl IndexedChain {
             &self.client.get_block_bytes(stale_hash)?,
             &self.client.get_spent_bytes(stale_hash)?,
         )?;
-        self.store.delete(&builder.into_batches())?;
+        self.store.undo(&builder.into_batches())?;
         Ok(stale_hash)
     }
 
@@ -189,7 +189,7 @@ impl IndexedChain {
             stats.indexed_blocks += 1;
         }
         let batches = builder.into_batches();
-        self.store.write(&batches)?;
+        self.store.add(&batches)?;
         for batch in batches {
             self.headers.add(batch.header);
         }

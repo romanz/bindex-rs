@@ -1,9 +1,9 @@
-use std::path::Path;
+use std::{iter::empty, path::Path};
 
-use crate::index::{self, TxBlockPosRow};
+use crate::index::{self, IndexedHeader, TxBlockPosRow};
 
 use log::*;
-use rust_rocksdb as rocksdb;
+use rust_rocksdb::{self as rocksdb, ColumnFamily};
 
 /// Key-value database
 pub struct DB {
@@ -46,6 +46,44 @@ fn cf_descriptors(
         .map(|&name| rocksdb::ColumnFamilyDescriptor::new(name, opts.clone()))
 }
 
+enum OpType {
+    Add,
+    Undo,
+}
+
+// Add/undo index entries
+struct Op {
+    op_type: OpType,
+    write_batch: rocksdb::WriteBatch,
+}
+
+impl<'a> Op {
+    fn apply<K, V>(
+        &mut self,
+        cf: &'a ColumnFamily,
+        new: impl Iterator<Item = (K, V)>,
+        old: impl Iterator<Item = (K, V)>,
+    ) where
+        K: AsRef<[u8]>,
+        V: AsRef<[u8]>,
+    {
+        match self.op_type {
+            OpType::Add => {
+                // delete old items
+                old.for_each(|(key, _value)| self.write_batch.delete_cf(cf, key));
+                // put new items
+                new.for_each(|(key, value)| self.write_batch.put_cf(cf, key, value));
+            }
+            OpType::Undo => {
+                // delete new items
+                new.for_each(|(key, _value)| self.write_batch.delete_cf(cf, key));
+                // put old items
+                old.for_each(|(key, value)| self.write_batch.put_cf(cf, key, value));
+            }
+        }
+    }
+}
+
 impl DB {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, rocksdb::Error> {
         let opts = default_opts();
@@ -74,14 +112,14 @@ impl DB {
             .unwrap_or_else(|| panic!("missing CF: {name}"))
     }
 
-    fn apply_batch<F>(&self, f: F, batches: &[index::Batch]) -> Result<(), rocksdb::Error>
-    where
-        F: Fn(&mut rocksdb::WriteBatch, &rocksdb::ColumnFamily, &[u8], &[u8]),
-    {
+    fn apply_batch(&self, batches: &[index::Batch], op_type: OpType) -> Result<(), rocksdb::Error> {
         if batches.is_empty() {
             return Ok(());
         }
-        let mut write_batch = rocksdb::WriteBatch::default();
+        let mut op = Op {
+            op_type,
+            write_batch: rocksdb::WriteBatch::default(),
+        };
 
         // key = scripthash prefix || matching txnum, value = b""
         let cf = self.cf(SCRIPT_HASH_CF);
@@ -90,9 +128,7 @@ impl DB {
             scripthash_rows.extend(batch.scripthash_rows.iter().map(index::HashPrefixRow::key));
         }
         scripthash_rows.sort_unstable();
-        for row in scripthash_rows {
-            f(&mut write_batch, cf, row, b"");
-        }
+        op.apply(cf, scripthash_rows.into_iter().map(|k| (k, b"")), empty());
 
         // key = txid prefix || matching txnum, value = b""
         let cf = self.cf(TXID_CF);
@@ -101,38 +137,31 @@ impl DB {
             txid_rows.extend(batch.txid_rows.iter().map(index::HashPrefixRow::key));
         }
         txid_rows.sort_unstable();
-        for row in txid_rows {
-            f(&mut write_batch, cf, row, b"");
-        }
+        op.apply(cf, txid_rows.into_iter().map(|k| (k, b"")), empty());
 
         // key = last_txnum, value = chunk of offsets
         let cf = self.cf(TXPOS_CF);
         // Rows are sorted by `txnum`.
-        batches
-            .iter()
-            .flat_map(|batch| batch.txpos_rows.iter())
-            .map(index::TxBlockPosRow::serialize)
-            .for_each(|(k, v)| f(&mut write_batch, cf, &k, &v));
+        let txpos_rows = batches.iter().flat_map(|batch| batch.txpos_rows.iter());
+        op.apply(cf, txpos_rows.map(index::TxBlockPosRow::serialize), empty());
 
         // key = next_txnum, value = blockhash || blockheader
         let cf = self.cf(HEADERS_CF);
-        for batch in batches {
-            let (key, value) = batch.header.serialize();
-            f(&mut write_batch, cf, &key, &value);
-        }
+        let headers = batches.iter().map(|b| &b.header);
+        op.apply(cf, headers.map(IndexedHeader::serialize), empty());
 
         let opts = rocksdb::WriteOptions::default();
-        self.db.write_opt(write_batch, &opts)?;
+        self.db.write_opt(op.write_batch, &opts)?;
         Ok(())
     }
 
-    pub fn write(&self, batches: &[index::Batch]) -> Result<(), rocksdb::Error> {
-        self.apply_batch(|wb, cf, k, v| wb.put_cf(cf, k, v), batches)
+    pub fn add(&self, batches: &[index::Batch]) -> Result<(), rocksdb::Error> {
+        self.apply_batch(batches, OpType::Add)
     }
 
-    pub fn delete(&self, batches: &[index::Batch]) -> Result<(), rocksdb::Error> {
+    pub fn undo(&self, batches: &[index::Batch]) -> Result<(), rocksdb::Error> {
         // All keys contains txnum, so they are safe to delete in case of a reorg.
-        self.apply_batch(|wb, cf, k, _v| wb.delete_cf(cf, k), batches)
+        self.apply_batch(batches, OpType::Undo)
     }
 
     pub fn flush(&self) -> Result<(), rocksdb::Error> {
