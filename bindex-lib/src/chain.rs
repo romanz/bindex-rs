@@ -254,6 +254,9 @@ impl IndexedChain {
                     self.store
                         .synchronize_cdb(cdb_path, cdb_max_txnum)
                         .map_err(Error::Cdb)?;
+                    self.store
+                        .cleanup_rdb_duplications(cdb_path, cdb_max_txnum)
+                        .map_err(Error::Cdb)?;
                 }
             }
             // Start autocompactions when there are no new indexed blocks

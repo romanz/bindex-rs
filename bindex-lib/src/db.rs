@@ -14,6 +14,7 @@ pub struct DB {
     cdb_txid: Option<Cdb<File, CdbHash>>,
     cdb_script_hash: Option<Cdb<File, CdbHash>>,
     cdb_finalized_txnum: Option<TxNum>,
+    cdb_cleanup_txnum: Option<TxNum>,
 }
 
 fn default_opts() -> rocksdb::Options {
@@ -36,6 +37,8 @@ fn default_opts() -> rocksdb::Options {
     opts
 }
 
+const CLEANUP_BATCH_SIZE: usize = 100_000;
+const CLEANUP_FILE: &str = "cleanup";
 const HEADERS_CF: &str = "headers";
 const SCRIPT_HASH_CF: &str = "script_hash";
 const TXPOS_CF: &str = "txpos";
@@ -113,6 +116,7 @@ impl DB {
             cdb_txid: None,
             cdb_script_hash: None,
             cdb_finalized_txnum: None,
+            cdb_cleanup_txnum: None,
         };
         for &cf_name in COLUMN_FAMILIES {
             let cf = store.cf(cf_name);
@@ -142,6 +146,16 @@ impl DB {
                 format!("failed to open script_hash CDB at {script_hash_path:?}: {e}")
             })?);
         self.cdb_finalized_txnum = Some(max_txnum);
+
+        let cleanup_path = cdb_path.join(CLEANUP_FILE);
+        if cleanup_path.is_file() {
+            if let Ok(content) = fs::read_to_string(&cleanup_path) {
+                if let Ok(n) = content.trim().parse::<u32>() {
+                    self.cdb_cleanup_txnum = Some(TxNum::from_u32(n));
+                }
+            }
+        }
+
         info!("CDB loaded");
         Ok(())
     }
@@ -495,11 +509,77 @@ impl DB {
 
         if let Some(old) = old_txnum {
             let old_n = old.to_string();
-            let _ = std::fs::remove_file(cdb_path.join(format!("txid{old_n}.cdb")));
-            let _ = std::fs::remove_file(cdb_path.join(format!("script_hash{old_n}.cdb")));
+            let _ = fs::remove_file(cdb_path.join(format!("txid{old_n}.cdb")));
+            let _ = fs::remove_file(cdb_path.join(format!("script_hash{old_n}.cdb")));
             info!("deleted old CDB files for txnum {}", old_n);
         }
 
+        Ok(())
+    }
+
+    /// Delete all RocksDB records in the txid and script_hash CFs with txnum <= `max_txnum`,
+    /// since those are now covered by the CDB. Skips if already cleaned (tracked via cleanup file).
+    pub fn cleanup_rdb_duplications(
+        &mut self,
+        cdb_path: &Path,
+        max_txnum: TxNum,
+    ) -> Result<(), String> {
+        if self.cdb_cleanup_txnum == Some(max_txnum) {
+            return Ok(());
+        }
+
+        info!("cleaning up RocksDB records up to txnum {}", max_txnum);
+
+        for cf_name in [TXID_CF, SCRIPT_HASH_CF] {
+            Self::build_cleanup_batch(self.cf(cf_name), &self.db, max_txnum)
+                .map_err(|e| format!("RocksDB cleanup failed: {e}"))?;
+        }
+
+        let cleanup_path = cdb_path.join(CLEANUP_FILE);
+        fs::write(&cleanup_path, max_txnum.to_string())
+            .map_err(|e| format!("failed to write cleanup file at {cleanup_path:?}: {e}"))?;
+        self.cdb_cleanup_txnum = Some(max_txnum);
+        info!("RocksDB cleanup completed for txnum {}", max_txnum);
+        Ok(())
+    }
+
+    fn build_cleanup_batch(
+        cf: &rocksdb::ColumnFamily,
+        db: &rocksdb::DB,
+        max_txnum: TxNum,
+    ) -> Result<(), rocksdb::Error> {
+        let mut batch = rocksdb::WriteBatch::default();
+        let mut batch_count = 0;
+        let mut opts = rocksdb::ReadOptions::default();
+        opts.fill_cache(false);
+        let mut iter = db.raw_iterator_cf_opt(cf, opts);
+        iter.seek_to_first();
+        loop {
+            match iter.key() {
+                Some(k) if k.len() == index::HashPrefixRow::LEN => {
+                    let key: [u8; index::HashPrefixRow::LEN] = k.try_into().unwrap();
+                    let row_txnum = TxNum::deserialize(key[Prefix::LEN..].try_into().unwrap());
+                    if row_txnum <= max_txnum {
+                        batch.delete_cf(cf, key);
+                        batch_count += 1;
+                        if batch_count >= CLEANUP_BATCH_SIZE {
+                            db.write(batch)?;
+                            batch = rocksdb::WriteBatch::default();
+                            batch_count = 0;
+                        }
+                    }
+                }
+                Some(_) => {}
+                None => {
+                    iter.status()?;
+                    break;
+                }
+            }
+            iter.next();
+        }
+        if batch_count > 0 {
+            db.write(batch)?;
+        }
         Ok(())
     }
 
