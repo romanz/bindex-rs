@@ -1,7 +1,9 @@
+use std::fs::{self, File};
 use std::path::Path;
 
-use crate::index::{self, TxBlockPosRow, TxNum};
+use crate::index::{self, Prefix, TxBlockPosRow, TxNum};
 
+use cdb64::{Cdb, CdbHash};
 use log::*;
 use rust_rocksdb as rocksdb;
 
@@ -9,6 +11,9 @@ use rust_rocksdb as rocksdb;
 pub struct DB {
     db: rocksdb::DB,
     compacting: bool,
+    cdb_txid: Option<Cdb<File, CdbHash>>,
+    cdb_script_hash: Option<Cdb<File, CdbHash>>,
+    cdb_finalized_txnum: Option<TxNum>,
 }
 
 fn default_opts() -> rocksdb::Options {
@@ -46,6 +51,24 @@ fn cf_descriptors(
         .map(|&name| rocksdb::ColumnFamilyDescriptor::new(name, opts.clone()))
 }
 
+/// Find the highest txnum for which txid and script_hash CDB files both exist.
+pub fn find_highest_finalized_cdb_txnum(cdb_path: &Path) -> Option<TxNum> {
+    let entries = fs::read_dir(cdb_path).ok()?;
+    let mut max_txnum: Option<TxNum> = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path.file_name().and_then(|n| n.to_str())?;
+        let suffix = name.strip_prefix("txid")?.strip_suffix(".cdb")?;
+        let n: u32 = suffix.parse().ok()?;
+        let txnum = TxNum::from_u32(n);
+        let script_hash_path = cdb_path.join(format!("script_hash{n}.cdb"));
+        if script_hash_path.is_file() && max_txnum.is_none_or(|m| txnum > m) {
+            max_txnum = Some(txnum);
+        }
+    }
+    max_txnum
+}
+
 impl DB {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, rocksdb::Error> {
         let opts = default_opts();
@@ -54,6 +77,9 @@ impl DB {
         let store = Self {
             db,
             compacting: false,
+            cdb_txid: None,
+            cdb_script_hash: None,
+            cdb_finalized_txnum: None,
         };
         for &cf_name in COLUMN_FAMILIES {
             let cf = store.cf(cf_name);
@@ -66,6 +92,25 @@ impl DB {
             );
         }
         Ok(store)
+    }
+
+    /// Open CDB files for the given path and max txnum.
+    pub fn open_cdb(&mut self, cdb_path: &Path, max_txnum: TxNum) -> Result<(), String> {
+        let n = max_txnum.to_string();
+        let txid_path = cdb_path.join(format!("txid{n}.cdb"));
+        let script_hash_path = cdb_path.join(format!("script_hash{n}.cdb"));
+
+        self.cdb_txid = Some(
+            Cdb::<File, CdbHash>::open(&txid_path)
+                .map_err(|e| format!("failed to open txid CDB at {txid_path:?}: {e}"))?,
+        );
+        self.cdb_script_hash =
+            Some(Cdb::<File, CdbHash>::open(&script_hash_path).map_err(|e| {
+                format!("failed to open script_hash CDB at {script_hash_path:?}: {e}")
+            })?);
+        self.cdb_finalized_txnum = Some(max_txnum);
+        info!("CDB loaded");
+        Ok(())
     }
 
     fn cf(&self, name: &str) -> &rocksdb::ColumnFamily {
@@ -156,27 +201,50 @@ impl DB {
         Ok(())
     }
 
+    fn txnums_from_cdb_prefix(cdb: &Cdb<File, CdbHash>, prefix: &[u8], from: TxNum) -> Vec<TxNum> {
+        let value = cdb
+            .get(prefix)
+            .expect("CDB read failed")
+            .unwrap_or_default();
+        value
+            .chunks_exact(TxNum::LEN)
+            .map(|chunk| TxNum::deserialize(chunk.try_into().unwrap()))
+            .filter(|&txnum| txnum >= from)
+            .collect()
+    }
+
     /// Collect a list of `TxNum`s for specified `script_hash`.
     pub fn scan_by_script_hash(
         &self,
         script_hash: &index::ScriptHash,
         from: TxNum,
     ) -> Result<Vec<TxNum>, rocksdb::Error> {
-        let cf = self.cf(SCRIPT_HASH_CF);
         let mut txnums = Vec::new();
 
-        let hash_prefix = (*script_hash).into();
-        let start = index::HashPrefixRow::new(hash_prefix, from);
+        let hash_prefix: Prefix = (*script_hash).into();
         // Allow resuming iteration from a specified txnum (for incremental sync)
+        let prefix_bytes = hash_prefix.as_bytes();
+
+        if let (Some(ref cdb), Some(max_txnum)) = (&self.cdb_script_hash, self.cdb_finalized_txnum)
+        {
+            if from <= max_txnum {
+                txnums.extend(Self::txnums_from_cdb_prefix(cdb, prefix_bytes, from));
+            }
+        }
+        let start = index::HashPrefixRow::new(hash_prefix, from);
+        let cf = self.cf(SCRIPT_HASH_CF);
         let mode = rocksdb::IteratorMode::From(start.key(), rocksdb::Direction::Forward);
         for kv in self.db.iterator_cf(cf, mode) {
             let (key, _) = kv?;
-            if !key.starts_with(hash_prefix.as_bytes()) {
+            if !key.starts_with(prefix_bytes) {
                 break;
             }
-            let row = index::HashPrefixRow::from_bytes(key[..].try_into().unwrap());
-            assert!(row.txnum() >= from);
-            txnums.push(row.txnum());
+            let row_txnum = index::HashPrefixRow::from_bytes(key[..].try_into().unwrap()).txnum();
+            assert!(row_txnum >= from);
+            // Safety check if the RustDB is not clean and stil contains values that appear in the CDB.
+            if self.cdb_finalized_txnum.is_none_or(|max| row_txnum > max) {
+                txnums.push(row_txnum);
+            }
         }
         Ok(txnums)
     }
@@ -184,19 +252,31 @@ impl DB {
     /// Collect a list of `TxNum`s for specified `txid`.
     #[allow(dead_code)]
     pub fn scan_by_txid(&self, txid: &bitcoin::Txid) -> Result<Vec<TxNum>, rocksdb::Error> {
-        let cf = self.cf(TXID_CF);
         let mut txnums = Vec::new();
 
-        let hash_prefix = (*txid.as_raw_hash()).into();
+        let hash_prefix: Prefix = (*txid.as_raw_hash()).into();
+        let prefix_bytes = hash_prefix.as_bytes();
+
+        if let (Some(ref cdb), Some(_)) = (&self.cdb_txid, self.cdb_finalized_txnum) {
+            txnums.extend(Self::txnums_from_cdb_prefix(
+                cdb,
+                prefix_bytes,
+                TxNum::default(),
+            ));
+        }
+        let cf = self.cf(TXID_CF);
         let start = index::HashPrefixRow::new(hash_prefix, TxNum::default());
         let mode = rocksdb::IteratorMode::From(start.key(), rocksdb::Direction::Forward);
         for kv in self.db.iterator_cf(cf, mode) {
             let (key, _) = kv?;
-            if !key.starts_with(hash_prefix.as_bytes()) {
+            if !key.starts_with(prefix_bytes) {
                 break;
             }
-            let row = index::HashPrefixRow::from_bytes(key[..].try_into().unwrap());
-            txnums.push(row.txnum());
+            let row_txnum = index::HashPrefixRow::from_bytes(key[..].try_into().unwrap()).txnum();
+            // Safety check if the RustDB is not clean and stil contains values that appear in the CDB.
+            if self.cdb_finalized_txnum.is_none_or(|max| row_txnum > max) {
+                txnums.push(row_txnum);
+            }
         }
         Ok(txnums)
     }

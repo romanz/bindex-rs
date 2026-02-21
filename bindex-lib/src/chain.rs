@@ -34,6 +34,9 @@ pub enum Error {
 
     #[error("IO failed: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("CDB failed: {0}")]
+    Cdb(String),
 }
 
 #[derive(Debug)]
@@ -60,15 +63,17 @@ pub struct IndexedChain {
     headers: headers::Headers,
     client: client::Client,
     store: db::DB,
+    #[allow(dead_code)] // TODO: will be used when writing CDB
+    cdb_max_txnum: Option<index::TxNum>,
+    #[allow(dead_code)] // TODO: will be used when writing CDB
+    cdb_path: Option<PathBuf>,
 }
 
 #[derive(Debug)]
 pub struct Config {
     db_path: PathBuf,
     url: String,
-    #[allow(dead_code)]
     cdb_path: Option<PathBuf>,
-    #[allow(dead_code)]
     cdb_max_txnum: Option<u32>,
 }
 
@@ -122,7 +127,18 @@ impl IndexedChain {
             res => assert_eq!(index::BlockBytes::new(res?), genesis_block),
         };
 
-        let store = db::DB::open(config.db_path)?;
+        let cdb_path = config.cdb_path.clone();
+        if let Some(ref path) = cdb_path {
+            std::fs::create_dir_all(path)?;
+        }
+        let cdb_max_txnum = config.cdb_max_txnum.map(index::TxNum::from_u32);
+
+        let mut store = db::DB::open(config.db_path)?;
+        if let Some(ref path) = cdb_path {
+            if let Some(max_txnum) = db::find_highest_finalized_cdb_txnum(path) {
+                store.open_cdb(path, max_txnum).map_err(Error::Cdb)?;
+            }
+        }
         let headers = headers::Headers::new(store.headers()?);
         if let Some(indexed_genesis) = headers.genesis() {
             if indexed_genesis.hash() != genesis_hash {
@@ -139,6 +155,8 @@ impl IndexedChain {
             headers,
             client,
             store,
+            cdb_max_txnum,
+            cdb_path,
         })
     }
 
