@@ -202,6 +202,14 @@ struct Args {
     /// Exit after one sync is over
     #[arg(short = '1', long = "sync-once", default_value_t = false)]
     sync_once: bool,
+
+    /// Directory to store CDB index files
+    #[arg(long = "cdb-dir")]
+    cdb_dir: Option<PathBuf>,
+
+    /// Maximum txnum to store in CDB; txnums above this stay in RocksDB
+    #[arg(long = "cdb-max-txnum")]
+    cdb_max_txnum: Option<u32>,
 }
 
 fn collect_addresses(args: &Args) -> Result<HashSet<bitcoin::Address>> {
@@ -229,7 +237,12 @@ fn run() -> Result<()> {
     let args = Args::parse();
     env_logger::builder().format_timestamp_micros().init();
 
-    let mut chain = IndexedChain::open(&args.db_path, args.network.into())?;
+    let mut chain = IndexedChain::open(
+        &args.db_path,
+        args.network.into(),
+        args.cdb_dir.as_deref(),
+        args.cdb_max_txnum,
+    )?;
     let mut tip = chain.headers().tip_hash();
 
     let cache_db = rusqlite::Connection::open(Path::new(match args.cache_file {

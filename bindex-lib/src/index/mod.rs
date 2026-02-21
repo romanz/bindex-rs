@@ -65,6 +65,10 @@ pub struct TxNum(u32);
 impl TxNum {
     const LEN: usize = std::mem::size_of::<Self>();
 
+    pub const fn from_u32(n: u32) -> Self {
+        Self(n)
+    }
+
     pub fn offset_from(&self, base: TxNum) -> Option<u32> {
         self.0.checked_sub(base.0)
     }

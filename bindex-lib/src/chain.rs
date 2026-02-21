@@ -31,6 +31,9 @@ pub enum Error {
 
     #[error("block not found: {0}")]
     BlockNotFound(#[from] headers::Reorg),
+
+    #[error("IO failed: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 #[derive(Debug)]
@@ -63,15 +66,30 @@ pub struct IndexedChain {
 pub struct Config {
     db_path: PathBuf,
     url: String,
+    #[allow(dead_code)]
+    cdb_path: Option<PathBuf>,
+    #[allow(dead_code)]
+    cdb_max_txnum: Option<u32>,
 }
 
 impl IndexedChain {
     /// Open an existing DB, or create if missing.
     /// Use binary format REST API for fetching the data from bitcoind.
-    pub fn open(db_dir: impl AsRef<Path>, network: Network) -> Result<Self, Error> {
+    pub fn open(
+        db_dir: impl AsRef<Path>,
+        network: Network,
+        cdb_dir: Option<impl AsRef<Path>>,
+        cdb_max_txnum: Option<u32>,
+    ) -> Result<Self, Error> {
         let db_path = db_dir.as_ref().to_path_buf().join(network.to_string());
         let url = format!("http://localhost:{}", default_rpc_port(network));
-        Self::from_config(Config { db_path, url })
+        let cdb_path = cdb_dir.map(|d| d.as_ref().to_path_buf().join(network.to_string()));
+        Self::from_config(Config {
+            db_path,
+            url,
+            cdb_path,
+            cdb_max_txnum,
+        })
     }
 
     fn from_config(config: Config) -> Result<Self, Error> {
@@ -299,6 +317,8 @@ mod tests {
         let config = Config {
             db_path: dir.path().to_path_buf(),
             url: format!("http://{}", node.params.rpc_socket),
+            cdb_path: None,
+            cdb_max_txnum: None,
         };
         let mut chain = IndexedChain::from_config(config).unwrap();
         let stats = chain.sync(1000).unwrap();
