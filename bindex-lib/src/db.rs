@@ -132,7 +132,13 @@ impl DB {
         let cf = self.cf(SCRIPT_HASH_CF);
         let mut scripthash_rows = vec![];
         for batch in batches {
-            scripthash_rows.extend(batch.scripthash_rows.iter().map(index::HashPrefixRow::key));
+            scripthash_rows.extend(
+                batch
+                    .scripthash_rows
+                    .iter()
+                    .filter(|r| self.cdb_finalized_txnum.is_none_or(|max| r.txnum() > max))
+                    .map(index::HashPrefixRow::key),
+            );
         }
         scripthash_rows.sort_unstable();
         for row in scripthash_rows {
@@ -143,7 +149,13 @@ impl DB {
         let cf = self.cf(TXID_CF);
         let mut txid_rows = vec![];
         for batch in batches {
-            txid_rows.extend(batch.txid_rows.iter().map(index::HashPrefixRow::key));
+            txid_rows.extend(
+                batch
+                    .txid_rows
+                    .iter()
+                    .filter(|r| self.cdb_finalized_txnum.is_none_or(|max| r.txnum() > max))
+                    .map(index::HashPrefixRow::key),
+            );
         }
         txid_rows.sort_unstable();
         for row in txid_rows {
