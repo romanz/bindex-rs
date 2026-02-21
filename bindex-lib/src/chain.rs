@@ -63,7 +63,6 @@ pub struct IndexedChain {
     headers: headers::Headers,
     client: client::Client,
     store: db::DB,
-    #[allow(dead_code)] // TODO: will be used when writing CDB
     cdb_max_txnum: Option<index::TxNum>,
     #[allow(dead_code)] // TODO: will be used when writing CDB
     cdb_path: Option<PathBuf>,
@@ -226,8 +225,11 @@ impl IndexedChain {
         }
         let batches = builder.into_batches();
         self.store.write(&batches)?;
+        let mut max_next_txnum = index::TxNum::default();
         for batch in batches {
-            self.headers.add(batch.header);
+            let header = batch.header;
+            max_next_txnum = max_next_txnum.max(header.next_txnum());
+            self.headers.add(header);
         }
 
         stats.elapsed = t.elapsed();
@@ -245,6 +247,15 @@ impl IndexedChain {
                 stats.size_read as f64 / (1e6 * stats.elapsed.as_secs_f64()),
             );
         } else {
+            if let (Some(cdb_path), Some(cdb_max_txnum)) =
+                (self.cdb_path.as_ref(), self.cdb_max_txnum)
+            {
+                if max_next_txnum > cdb_max_txnum {
+                    self.store
+                        .synchronize_cdb(cdb_path, cdb_max_txnum)
+                        .map_err(Error::Cdb)?;
+                }
+            }
             // Start autocompactions when there are no new indexed blocks
             self.store.start_compactions()?;
         }

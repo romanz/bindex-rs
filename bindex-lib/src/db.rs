@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::index::{self, Prefix, TxBlockPosRow, TxNum};
 
-use cdb64::{Cdb, CdbHash};
+use cdb64::{Cdb, CdbHash, CdbWriter};
 use log::*;
 use rust_rocksdb as rocksdb;
 
@@ -42,6 +42,39 @@ const TXPOS_CF: &str = "txpos";
 const TXID_CF: &str = "txid";
 
 const COLUMN_FAMILIES: &[&str] = &[HEADERS_CF, TXPOS_CF, TXID_CF, SCRIPT_HASH_CF];
+
+/// Collect all txnums for `prefix` from RocksDB iterator (advancing past them),
+/// keeping only those <= `max_txnum`. Returns the txnums as one concatenated vector.
+fn collect_rdb_prefix(
+    rdb_iter: &mut rocksdb::DBRawIterator<'_>,
+    prefix: Prefix,
+    max_txnum: TxNum,
+) -> Vec<u8> {
+    let prefix_bytes = prefix.as_bytes();
+    let mut txnums_buf = Vec::new();
+    loop {
+        let (key_prefix, row_txnum) = match rdb_iter.key() {
+            Some(k) if k.len() == index::HashPrefixRow::LEN => {
+                let kp: [u8; Prefix::LEN] = k[..Prefix::LEN].try_into().unwrap();
+                let txnum: [u8; TxNum::LEN] = k[Prefix::LEN..].try_into().unwrap();
+                (kp, txnum)
+            }
+            Some(_) => break,
+            None => {
+                rdb_iter.status().expect("RocksDB iterator error");
+                break;
+            }
+        };
+        if key_prefix != prefix_bytes {
+            break;
+        }
+        if TxNum::deserialize(row_txnum) <= max_txnum {
+            txnums_buf.extend_from_slice(&row_txnum);
+        }
+        rdb_iter.next();
+    }
+    txnums_buf
+}
 
 fn cf_descriptors(
     opts: &rocksdb::Options,
@@ -306,6 +339,168 @@ impl DB {
             return Ok(row.get_tx_block_pos(txnum));
         }
         panic!("Missing {:?}", txnum)
+    }
+
+    /// Scan all rows in `cf`, group by 8-byte prefix, keep only txnums <= `max_txnum`,
+    /// and write one CDB entry per prefix (value = concatenated big-endian u32 txnums).
+    fn build_cdb_for_cf(
+        db: &rocksdb::DB,
+        cf: &rocksdb::ColumnFamily,
+        path: &Path,
+        max_txnum: TxNum,
+        existing_cdb: Option<&Cdb<File, CdbHash>>,
+    ) -> Result<(), String> {
+        let mut writer = CdbWriter::<File, CdbHash>::create(path)
+            .map_err(|e| format!("failed to create CDB writer at {path:?}: {e}"))?;
+
+        let mut opts = rocksdb::ReadOptions::default();
+        opts.fill_cache(false);
+        let mut rdb_iter = db.raw_iterator_cf_opt(cf, opts);
+        rdb_iter.seek_to_first();
+
+        // Collect existing CDB entries for merge (CDB stores prefix -> concatenated txnums).
+        // CDB's records section is in the order they were added. Since we build CDB by
+        // scanning RocksDB in sorted key order, the CDB iterator yields prefixes in sorted order.
+        let mut cdb_iter = existing_cdb.map(|c| {
+            c.iter()
+                .map(|r| {
+                    let (k, v) = r.expect("CDB read failed");
+                    let arr: [u8; Prefix::LEN] =
+                        k[..Prefix::LEN].try_into().expect("invalid CDB key");
+                    let prefix = Prefix::from(arr);
+                    (prefix, v)
+                })
+                .peekable()
+        });
+
+        loop {
+            let rdb_prefix: Option<Prefix> = rdb_iter.key().map(|k| {
+                debug_assert_eq!(k.len(), index::HashPrefixRow::LEN);
+                let arr: [u8; Prefix::LEN] = k[..Prefix::LEN].try_into().unwrap();
+                Prefix::from(arr)
+            });
+            let cdb_prefix: Option<Prefix> =
+                cdb_iter.as_mut().and_then(|it| it.peek().map(|(p, _)| *p));
+
+            match (rdb_prefix, cdb_prefix) {
+                (None, None) => break,
+                (None, Some(_)) => {
+                    let (prefix, cdb_val) = cdb_iter.as_mut().unwrap().next().unwrap();
+                    writer
+                        .put(prefix.as_bytes(), &cdb_val)
+                        .map_err(|e| format!("CDB put failed: {e}"))?;
+                }
+                (Some(rp), None) => {
+                    let txnums_buf = collect_rdb_prefix(&mut rdb_iter, rp, max_txnum);
+                    if !txnums_buf.is_empty() {
+                        writer
+                            .put(rp.as_bytes(), &txnums_buf)
+                            .map_err(|e| format!("CDB put failed: {e}"))?;
+                    }
+                }
+                (Some(rp), Some(cp)) => match rp.cmp(&cp) {
+                    std::cmp::Ordering::Less => {
+                        let heights_buf = collect_rdb_prefix(&mut rdb_iter, rp, max_txnum);
+                        if !heights_buf.is_empty() {
+                            writer
+                                .put(rp.as_bytes(), &heights_buf)
+                                .map_err(|e| format!("CDB put failed: {e}"))?;
+                        }
+                    }
+                    std::cmp::Ordering::Greater => {
+                        let (prefix, cdb_val) = cdb_iter.as_mut().unwrap().next().unwrap();
+                        writer
+                            .put(prefix.as_bytes(), &cdb_val)
+                            .map_err(|e| format!("CDB put failed: {e}"))?;
+                    }
+                    std::cmp::Ordering::Equal => {
+                        // Prefix in both: start with the CDB value, then append only RDB
+                        // heights not already present in the CDB (deduplication needed because
+                        // RocksDB still holds all heights until cleanup is implemented).
+                        let (_, cdb_val) = cdb_iter.as_mut().unwrap().next().unwrap();
+                        let cdb_txnums: std::collections::HashSet<[u8; TxNum::LEN]> = cdb_val
+                            .chunks_exact(TxNum::LEN)
+                            .map(|c| c.try_into().unwrap())
+                            .collect();
+                        let mut txnums_buf = cdb_val;
+                        for chunk in collect_rdb_prefix(&mut rdb_iter, rp, max_txnum)
+                            .chunks_exact(TxNum::LEN)
+                        {
+                            if !cdb_txnums.contains(chunk) {
+                                txnums_buf.extend_from_slice(chunk);
+                            }
+                        }
+                        if !txnums_buf.is_empty() {
+                            writer
+                                .put(rp.as_bytes(), &txnums_buf)
+                                .map_err(|e| format!("CDB put failed: {e}"))?;
+                        }
+                    }
+                },
+            }
+        }
+
+        writer
+            .finalize()
+            .map_err(|e| format!("failed to finalize CDB at {path:?}: {e}"))?;
+        Ok(())
+    }
+
+    /// Build CDB files for txid and script_hash, covering txnums up to and including `max_txnum`.
+    /// Writes to .tmp files, renames to .cdb, opens the new CDBs, and deletes old CDB files.
+    pub fn synchronize_cdb(&mut self, cdb_path: &Path, max_txnum: TxNum) -> Result<(), String> {
+        let old_txnum = self.cdb_finalized_txnum;
+        if let Some(current) = old_txnum {
+            if current > max_txnum {
+                return Err("cdb_max_txnum cannot be decreased".into());
+            }
+            if current == max_txnum {
+                return Ok(());
+            }
+        }
+
+        let n = max_txnum.to_string();
+        let txid_tmp_path = cdb_path.join(format!("txid{n}.cdb.tmp"));
+        let script_hash_tmp_path = cdb_path.join(format!("script_hash{n}.cdb.tmp"));
+
+        info!("building CDB for txnums up to {} at {:?}", n, cdb_path);
+
+        Self::build_cdb_for_cf(
+            &self.db,
+            self.cf(TXID_CF),
+            &txid_tmp_path,
+            max_txnum,
+            self.cdb_txid.as_ref(),
+        )
+        .map_err(|e| format!("failed to build txid CDB: {e}"))?;
+        Self::build_cdb_for_cf(
+            &self.db,
+            self.cf(SCRIPT_HASH_CF),
+            &script_hash_tmp_path,
+            max_txnum,
+            self.cdb_script_hash.as_ref(),
+        )
+        .map_err(|e| format!("failed to build script_hash CDB: {e}"))?;
+
+        let txid_path = cdb_path.join(format!("txid{n}.cdb"));
+        let script_hash_path = cdb_path.join(format!("script_hash{n}.cdb"));
+        std::fs::rename(&txid_tmp_path, &txid_path)
+            .map_err(|e| format!("failed to rename {txid_tmp_path:?} to {txid_path:?}: {e}"))?;
+        std::fs::rename(&script_hash_tmp_path, &script_hash_path).map_err(|e| {
+            format!("failed to rename {script_hash_tmp_path:?} to {script_hash_path:?}: {e}")
+        })?;
+
+        self.open_cdb(cdb_path, max_txnum)?;
+        info!("CDB finalized at txnum {}", n);
+
+        if let Some(old) = old_txnum {
+            let old_n = old.to_string();
+            let _ = std::fs::remove_file(cdb_path.join(format!("txid{old_n}.cdb")));
+            let _ = std::fs::remove_file(cdb_path.join(format!("script_hash{old_n}.cdb")));
+            info!("deleted old CDB files for txnum {}", old_n);
+        }
+
+        Ok(())
     }
 
     /// Load all headers from DB.
