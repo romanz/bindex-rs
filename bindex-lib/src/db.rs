@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::index::{self, TxBlockPosRow};
+use crate::index::{self, TxBlockPosRow, TxNum};
 
 use log::*;
 use rust_rocksdb as rocksdb;
@@ -160,8 +160,8 @@ impl DB {
     pub fn scan_by_script_hash(
         &self,
         script_hash: &index::ScriptHash,
-        from: index::TxNum,
-    ) -> Result<Vec<index::TxNum>, rocksdb::Error> {
+        from: TxNum,
+    ) -> Result<Vec<TxNum>, rocksdb::Error> {
         let cf = self.cf(SCRIPT_HASH_CF);
         let mut txnums = Vec::new();
 
@@ -183,12 +183,12 @@ impl DB {
 
     /// Collect a list of `TxNum`s for specified `txid`.
     #[allow(dead_code)]
-    pub fn scan_by_txid(&self, txid: &bitcoin::Txid) -> Result<Vec<index::TxNum>, rocksdb::Error> {
+    pub fn scan_by_txid(&self, txid: &bitcoin::Txid) -> Result<Vec<TxNum>, rocksdb::Error> {
         let cf = self.cf(TXID_CF);
         let mut txnums = Vec::new();
 
         let hash_prefix = (*txid.as_raw_hash()).into();
-        let start = index::HashPrefixRow::new(hash_prefix, index::TxNum::default());
+        let start = index::HashPrefixRow::new(hash_prefix, TxNum::default());
         let mode = rocksdb::IteratorMode::From(start.key(), rocksdb::Direction::Forward);
         for kv in self.db.iterator_cf(cf, mode) {
             let (key, _) = kv?;
@@ -202,10 +202,7 @@ impl DB {
     }
 
     /// Lookup transaction position (offset & size) within its block.
-    pub fn get_tx_block_pos(
-        &self,
-        txnum: index::TxNum,
-    ) -> Result<index::TxBlockPos, rocksdb::Error> {
+    pub fn get_tx_block_pos(&self, txnum: TxNum) -> Result<index::TxBlockPos, rocksdb::Error> {
         let cf = self.cf(TXPOS_CF);
 
         let from_key = txnum.serialize();
