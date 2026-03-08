@@ -1,5 +1,6 @@
 mod header;
 mod scripthash;
+mod sptweak;
 mod txid;
 mod txpos;
 
@@ -8,6 +9,7 @@ use bitcoin_slices::bsl;
 
 pub use header::IndexedHeader;
 pub use scripthash::ScriptHash;
+pub use sptweak::TxTweakRow;
 pub use txpos::{TxBlockPos, TxBlockPosRow};
 
 #[derive(thiserror::Error, Debug)]
@@ -22,7 +24,7 @@ pub enum Error {
     Leftover(usize),
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Hash)]
 pub struct Prefix([u8; Prefix::LEN]);
 
 /// Fixed-size prefix of a hash (e.g. ScriptHash, Txid).
@@ -150,6 +152,14 @@ impl BlockBytes {
     pub fn txs_count(&self) -> u32 {
         parse_txs_count(&self.0[bitcoin::block::Header::SIZE..])
     }
+
+    #[cfg(test)]
+    pub fn txdata(&self) -> Vec<bitcoin::Transaction> {
+        use bitcoin::consensus::encode::deserialize;
+
+        let block: bitcoin::Block = deserialize(&self.0).expect("invalid block");
+        block.txdata
+    }
 }
 
 pub struct SpentBytes(Vec<u8>);
@@ -194,30 +204,41 @@ pub struct Batch {
     pub scripthash_rows: Vec<HashPrefixRow>,
     pub txid_rows: Vec<HashPrefixRow>,
     pub txpos_rows: Vec<txpos::TxBlockPosRow>,
+    pub sptweak_rows: Vec<sptweak::TxTweakRow>,
     pub header: IndexedHeader,
 }
 
-impl Batch {
-    pub fn build(
+pub struct Context(sptweak::Context);
+
+impl Context {
+    pub fn new() -> Self {
+        Self(sptweak::Context::new())
+    }
+
+    pub fn index(
+        &self,
         txnum_range: TxNumRange,
         blockhash: BlockHash,
         block: &BlockBytes,
         spent: &SpentBytes,
-    ) -> Result<Self, Error> {
+    ) -> Result<Batch, Error> {
         let first_txnum = txnum_range.first;
         let scripthash = scripthash::index(block, spent, first_txnum)?;
         let txpos = txpos::index(block, first_txnum)?;
         let txid = txid::index(block, first_txnum)?;
+        let sptweak = self.0.index(block, spent, first_txnum)?;
 
         // All must have the same number of transactions
         assert_eq!(txnum_range.next, scripthash.next_txnum);
         assert_eq!(txnum_range.next, txpos.next_txnum);
         assert_eq!(txnum_range.next, txid.next_txnum);
+        assert_eq!(txnum_range.next, sptweak.next_txnum);
 
         Ok(Batch {
             scripthash_rows: scripthash.rows,
             txpos_rows: txpos.rows,
             txid_rows: txid.rows,
+            sptweak_rows: sptweak.rows,
             header: IndexedHeader::new(txnum_range.next, blockhash, block),
         })
     }

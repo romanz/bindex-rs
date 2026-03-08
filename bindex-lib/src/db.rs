@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::index::{self, TxBlockPosRow};
+use crate::index::{self, Prefix, TxBlockPosRow};
 
 use log::*;
 use rust_rocksdb as rocksdb;
@@ -35,8 +35,9 @@ const HEADERS_CF: &str = "headers";
 const SCRIPT_HASH_CF: &str = "script_hash";
 const TXPOS_CF: &str = "txpos";
 const TXID_CF: &str = "txid";
+const SPTWEAK_CF: &str = "sptweak";
 
-const COLUMN_FAMILIES: &[&str] = &[HEADERS_CF, TXPOS_CF, TXID_CF, SCRIPT_HASH_CF];
+const COLUMN_FAMILIES: &[&str] = &[HEADERS_CF, TXPOS_CF, TXID_CF, SPTWEAK_CF, SCRIPT_HASH_CF];
 
 fn cf_descriptors(
     opts: &rocksdb::Options,
@@ -113,6 +114,17 @@ impl DB {
             .flat_map(|batch| batch.txpos_rows.iter())
             .map(index::TxBlockPosRow::serialize)
             .for_each(|(k, v)| f(&mut write_batch, cf, &k, &v));
+
+        // key = next_txnum || txid_prefix || tweak
+        let cf = self.cf(SPTWEAK_CF);
+        let mut sptweak_rows = vec![];
+        for batch in batches {
+            sptweak_rows.extend(batch.sptweak_rows.iter().map(index::TxTweakRow::serialize));
+        }
+        sptweak_rows.sort_unstable();
+        for row in sptweak_rows {
+            f(&mut write_batch, cf, row, b"");
+        }
 
         // key = next_txnum, value = blockhash || blockheader
         let cf = self.cf(HEADERS_CF);
@@ -231,5 +243,44 @@ impl DB {
             result.push(row)
         }
         Ok(result)
+    }
+
+    /// Load all headers from DB.
+    pub fn tweak_scan(&self) -> TweakScan<'_> {
+        let cf = self.cf(SPTWEAK_CF);
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        TweakScan {
+            iter,
+            prev_prefix: None,
+            tweaks: vec![],
+        }
+    }
+}
+
+pub struct TweakScan<'a> {
+    iter: rocksdb::DBIterator<'a>,
+    prev_prefix: Option<Prefix>,
+    tweaks: Vec<index::TxTweakRow>,
+}
+
+impl<'a> TweakScan<'a> {
+    pub fn scan(&mut self, txid: &bitcoin::Txid) -> Result<&[index::TxTweakRow], rocksdb::Error> {
+        let prefix: index::Prefix = txid.to_raw_hash().into();
+        assert!(self.prev_prefix.is_none_or(|prev| prev < prefix));
+        self.prev_prefix = Some(prefix);
+
+        self.iter.set_mode(rocksdb::IteratorMode::From(
+            prefix.as_bytes(),
+            rocksdb::Direction::Forward,
+        ));
+        self.tweaks.clear();
+        for kv in self.iter.by_ref() {
+            let row = index::TxTweakRow::deserialize(kv?.0[..].try_into().unwrap());
+            if prefix != row.prefix() {
+                break;
+            }
+            self.tweaks.push(row);
+        }
+        Ok(&self.tweaks)
     }
 }
