@@ -132,6 +132,30 @@ impl DB {
             f(&mut write_batch, cf, &key, &value);
         }
 
+        log::info!(
+            "{}: {} rows",
+            TXID_CF,
+            batches.iter().map(|b| b.txid_rows.len()).sum::<usize>()
+        );
+        log::info!(
+            "{}: {} rows",
+            TXPOS_CF,
+            batches.iter().map(|b| b.txpos_rows.len()).sum::<usize>()
+        );
+        log::info!(
+            "{}: {} rows",
+            SCRIPT_HASH_CF,
+            batches
+                .iter()
+                .map(|b| b.scripthash_rows.len())
+                .sum::<usize>()
+        );
+        log::info!(
+            "{}: {} rows",
+            SPTWEAK_CF,
+            batches.iter().map(|b| b.sptweak_rows.len()).sum::<usize>()
+        );
+        log::info!("{}: {} rows", HEADERS_CF, batches.len());
         let opts = rocksdb::WriteOptions::default();
         self.db.write_opt(write_batch, &opts)?;
         Ok(())

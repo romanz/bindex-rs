@@ -66,7 +66,6 @@ pub fn index(
     let spent = decode_spent(&spent.0)?;
     assert_eq!(block.txdata.len(), spent.len());
     for (tx, txouts_spent) in block.txdata.into_iter().zip(spent.into_iter()) {
-        let txnum = result.next_txnum;
         result.next_txnum.increment();
         if !maybe_silent_payment(&tx) {
             continue;
