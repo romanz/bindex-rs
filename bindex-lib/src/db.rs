@@ -35,8 +35,9 @@ const HEADERS_CF: &str = "headers";
 const SCRIPT_HASH_CF: &str = "script_hash";
 const TXPOS_CF: &str = "txpos";
 const TXID_CF: &str = "txid";
+const SPTWEAK_CF: &str = "sptweak";
 
-const COLUMN_FAMILIES: &[&str] = &[HEADERS_CF, TXPOS_CF, TXID_CF, SCRIPT_HASH_CF];
+const COLUMN_FAMILIES: &[&str] = &[HEADERS_CF, TXPOS_CF, TXID_CF, SPTWEAK_CF, SCRIPT_HASH_CF];
 
 fn cf_descriptors(
     opts: &rocksdb::Options,
@@ -103,6 +104,16 @@ impl DB {
         txid_rows.sort_unstable();
         for row in txid_rows {
             f(&mut write_batch, cf, row, b"");
+        }
+
+        // key = txid, value = sptweak
+        let cf = self.cf(SPTWEAK_CF);
+        // Rows are unsorted - SORT BY HEIGHT
+        for batch in batches {
+            for row in &batch.sptweak_rows {
+                let ser_tweak = row.tweak.serialize();
+                f(&mut write_batch, cf, &row.txid[..], &ser_tweak)
+            }
         }
 
         // key = last_txnum, value = chunk of offsets

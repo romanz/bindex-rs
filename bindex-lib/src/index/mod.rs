@@ -1,5 +1,6 @@
 mod header;
 mod scripthash;
+mod sptweak;
 mod txid;
 mod txpos;
 
@@ -11,6 +12,7 @@ use bitcoin::{
 pub use header::IndexedHeader;
 pub use scripthash::ScriptHash;
 pub use txpos::{TxBlockPos, TxBlockPosRow};
+pub use sptweak::TxTweakRow;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -145,6 +147,7 @@ pub struct Batch {
     pub scripthash_rows: Vec<HashPrefixRow>,
     pub txid_rows: Vec<HashPrefixRow>,
     pub txpos_rows: Vec<txpos::TxBlockPosRow>,
+    pub sptweak_rows: Vec<sptweak::TxTweakRow>,
     pub header: IndexedHeader,
 }
 
@@ -172,17 +175,20 @@ impl Batch {
         let scripthash = scripthash::index(block, spent, txnum)?;
         let txpos = txpos::index(block, txnum)?;
         let txid = txid::index(block, txnum)?;
+        let sptweak = sptweak::index(block, spent, txnum)?;
 
         // All must have the same number of transactions
         let txnum = txpos.next_txnum;
         assert_eq!(txnum, scripthash.next_txnum);
         assert_eq!(txnum, txid.next_txnum);
+        assert_eq!(txnum, sptweak.next_txnum);
 
         let header = bitcoin::consensus::encode::deserialize(block.header())?;
         Ok(Batch {
             scripthash_rows: scripthash.rows,
             txpos_rows: txpos.rows,
             txid_rows: txid.rows,
+            sptweak_rows: sptweak.rows,
             header: IndexedHeader::new(txnum, hash, header),
         })
     }
