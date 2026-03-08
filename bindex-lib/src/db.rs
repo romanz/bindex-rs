@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 use crate::index::{self, TxBlockPosRow};
 
@@ -106,13 +106,13 @@ impl DB {
             f(&mut write_batch, cf, row, b"");
         }
 
-        // key = txid, value = sptweak
+        // key = next_txnum || txid, value = sptweak
         let cf = self.cf(SPTWEAK_CF);
-        // Rows are unsorted - SORT BY HEIGHT
+        // Rows are sorted by `txnum`.
         for batch in batches {
             for row in &batch.sptweak_rows {
-                let ser_tweak = row.tweak.serialize();
-                f(&mut write_batch, cf, &row.txid[..], &ser_tweak)
+                let (key, value) = row.serialize(&batch.header);
+                f(&mut write_batch, cf, &key, &value)
             }
         }
 

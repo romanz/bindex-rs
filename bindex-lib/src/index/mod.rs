@@ -11,8 +11,8 @@ use bitcoin::{
 
 pub use header::IndexedHeader;
 pub use scripthash::ScriptHash;
-pub use txpos::{TxBlockPos, TxBlockPosRow};
 pub use sptweak::TxTweakRow;
+pub use txpos::{TxBlockPos, TxBlockPosRow};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {

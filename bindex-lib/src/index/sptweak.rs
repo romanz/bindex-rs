@@ -8,11 +8,28 @@ use secp256k1::{PublicKey, Scalar};
 
 use silentpayments::utils::receiving::get_pubkey_from_input;
 
-use crate::index::{BlockBytes, Error, IndexedBlock, SpentBytes, TxNum};
+use crate::index::{self, BlockBytes, Error, IndexedBlock, SpentBytes, TxNum};
 
 pub struct TxTweakRow {
     pub txid: Txid,
     pub tweak: secp256k1::PublicKey,
+}
+
+impl TxTweakRow {
+    const KEY_LEN: usize = TxNum::LEN + Txid::LEN;
+
+    pub fn serialize(
+        &self,
+        header: &index::IndexedHeader,
+    ) -> (
+        [u8; Self::KEY_LEN],
+        [u8; secp256k1::constants::PUBLIC_KEY_SIZE],
+    ) {
+        let mut key = [0; Self::KEY_LEN];
+        key[..TxNum::LEN].copy_from_slice(&header.next_txnum().serialize());
+        key[TxNum::LEN..].copy_from_slice(&self.txid[..]);
+        (key, self.tweak.serialize())
+    }
 }
 
 struct PerInput {
@@ -36,7 +53,11 @@ impl PerInput {
     }
 }
 
-pub fn index(block: &BlockBytes, spent: &SpentBytes, next_txnum: TxNum) -> Result<IndexedBlock<TxTweakRow>, Error> {
+pub fn index(
+    block: &BlockBytes,
+    spent: &SpentBytes,
+    next_txnum: TxNum,
+) -> Result<IndexedBlock<TxTweakRow>, Error> {
     let mut result = IndexedBlock::new(next_txnum);
 
     let secp = secp256k1::Secp256k1::verification_only(); // OPTIMIZE
@@ -44,11 +65,7 @@ pub fn index(block: &BlockBytes, spent: &SpentBytes, next_txnum: TxNum) -> Resul
     let block = bitcoin::Block::consensus_decode_from_finite_reader(&mut &block.0[..])?;
     let spent = decode_spent(&spent.0)?;
     assert_eq!(block.txdata.len(), spent.len());
-    for (tx, txouts_spent) in block
-        .txdata
-        .into_iter()
-        .zip(spent.into_iter())
-    {
+    for (tx, txouts_spent) in block.txdata.into_iter().zip(spent.into_iter()) {
         let txnum = result.next_txnum;
         result.next_txnum.increment();
         if !maybe_silent_payment(&tx) {
