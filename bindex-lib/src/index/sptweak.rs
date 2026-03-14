@@ -1,9 +1,10 @@
+use bitcoin::key::{Secp256k1, Verification};
 use bitcoin::{consensus::Decodable, secp256k1, Txid};
 use bitcoin::{
     hashes::{sha256t_hash_newtype, Hash, HashEngine},
     OutPoint,
 };
-use bitcoin::{Transaction, Witness};
+use bitcoin::{Transaction, Witness, XOnlyPublicKey};
 use secp256k1::{PublicKey, Scalar};
 
 use crate::index::{self, BlockBytes, Error, IndexedBlock, SpentBytes, TxNum};
@@ -33,83 +34,64 @@ impl TxTweakRow {
 struct PerInput {
     outpoint: OutPoint,
     pubkey: PublicKey,
+    count: usize,
 }
 
 impl PerInput {
-    fn new(txin: &bitcoin::TxIn, pubkey: PublicKey) -> Self {
+    fn new(txin: bitcoin::TxIn, pubkey: PublicKey) -> Self {
         Self {
             outpoint: txin.previous_output,
             pubkey,
+            count: 1,
         }
     }
 
-    fn combine(&self, other: &PerInput) -> Result<Self, SpError> {
+    fn combine(self, other: PerInput) -> Result<Self, SpError> {
         Ok(PerInput {
             outpoint: self.outpoint.min(other.outpoint),
-            pubkey: self
-                .pubkey
-                .combine(&other.pubkey)
-                .map_err(SpError::Secp256k1Error)?,
+            pubkey: self.pubkey.combine(&other.pubkey)?,
+            count: self.count + other.count,
         })
     }
 }
 
-pub fn index(
-    block: &BlockBytes,
-    spent: &SpentBytes,
-    next_txnum: TxNum,
-) -> Result<IndexedBlock<TxTweakRow>, Error> {
-    let mut result = IndexedBlock::new(next_txnum);
-
+pub fn index(block: &BlockBytes, spent: &SpentBytes, next_txnum: TxNum) -> Result<usize, Error> {
     let secp = secp256k1::Secp256k1::verification_only(); // OPTIMIZE
-
+    let mut result = 0;
     let block = bitcoin::Block::consensus_decode_from_finite_reader(&mut &block.0[..])?;
     let spent = decode_spent(&spent.0)?;
     assert_eq!(block.txdata.len(), spent.len());
     for (tx, txouts_spent) in block.txdata.into_iter().zip(spent.into_iter()) {
-        result.next_txnum.increment();
         if !maybe_silent_payment(&tx) {
             continue;
         }
         assert_eq!(tx.input.len(), txouts_spent.len());
-
+        // let per_input_entries = tx.input.into_iter().zip(txouts_spent.into_iter());
         // Iterate through each input of the transaction and collect its eligible pubkey:
-        let per_input_entries =
-            tx.input
-                .iter()
-                .zip(txouts_spent.into_iter())
-                .filter_map(|(txin, spent_txout)| {
-                    match get_pubkey_from_input(
-                        txin.script_sig.as_bytes(),
-                        &txin.witness,
-                        spent_txout.script_pubkey.as_bytes(),
-                    ) {
-                        Ok(input_pubkey) => {
-                            // return None if no matching output was found:
-                            input_pubkey.map(|pubkey| Ok(PerInput::new(txin, pubkey)))
-                        }
-                        Err(err) => Some(Err(err)),
-                    }
-                });
+        let per_input_entries = tx
+            .input
+            .into_iter()
+            .zip(txouts_spent.into_iter())
+            .filter_map(|(txin, spent_txout)| get_pubkey_from_input(txin, spent_txout).transpose());
 
         // Reduce into (smallest_outpoint, A_sum) pair:
-        match per_input_entries.reduce(|a, b| Ok(a?.combine(&b?)?)) {
-            Some(Ok(total)) => {
-                let PerInput {
-                    outpoint: smallest_outpoint,
-                    pubkey: A_sum,
-                } = total;
-                // Calculate the tweak data based on the public keys and outpoints
-                let input_hash = InputsHash::from_outpoint_and_A_sum(smallest_outpoint, A_sum);
-                let tweak = A_sum
-                    .mul_tweak(&secp, &input_hash.to_scalar())
-                    .expect("`mul_tweak()` failed");
-                let txid = tx.compute_txid();
-                result.rows.push(TxTweakRow { txid, tweak });
-            }
-            Some(Err(err)) => log::warn!("txid {}: {}", tx.compute_txid(), err),
-            None => (), // no relevant inputs
+        let total = match per_input_entries
+            .into_iter()
+            .reduce(|a, b| a?.combine(b?))
+            .transpose()
+            .unwrap_or_default()
+        {
+            Some(total) => total,
+            None => continue,
         };
+        // Calculate the tweak data based on the public keys and outpoints
+        let input_hash = InputsHash::from_outpoint_and_A_sum(total.outpoint, total.pubkey);
+        let tweak = total.pubkey
+            .mul_tweak(&secp, &input_hash.to_scalar())
+            .expect("`mul_tweak()` failed");
+        let txid = tx.compute_txid();        
+
+        result += total.count;
     }
     Ok(result)
 }
@@ -187,7 +169,7 @@ enum SpError {
     #[error("invalid vin: {0}")]
     InvalidVin(&'static str),
     #[error("secp256k1 error: {0}")]
-    Secp256k1Error(secp256k1::Error),
+    Secp256k1Error(#[from] secp256k1::Error),
 }
 
 /// Get the public keys from a set of input data.
@@ -207,14 +189,17 @@ enum SpError {
 /// This function will error if:
 ///
 /// * The provided Vin data is incorrect.
-pub fn get_pubkey_from_input(
-    script_sig: &[u8],
-    txinwitness: &Witness,
-    script_pub_key: &[u8],
-) -> Result<Option<PublicKey>, SpError> {
+fn get_pubkey_from_input(
+    txin: bitcoin::TxIn,
+    spent_txout: bitcoin::TxOut,
+) -> Result<Option<PerInput>, SpError> {
     use bitcoin::hashes::{hash160, Hash};
     use secp256k1::PublicKey;
-    use secp256k1::{Parity::Even, XOnlyPublicKey};
+    use secp256k1::XOnlyPublicKey;
+
+    let txinwitness = &txin.witness;
+    let script_sig = txin.script_sig.as_bytes();
+    let script_pub_key = spent_txout.script_pubkey.as_bytes();
 
     if is_p2pkh(script_pub_key) {
         match (txinwitness.is_empty(), script_sig.is_empty()) {
@@ -224,10 +209,9 @@ pub fn get_pubkey_from_input(
                     if let Some(pubkey_bytes) = script_sig.get(i - COMPRESSED_PUBKEY_SIZE..i) {
                         let pubkey_hash = hash160::Hash::hash(pubkey_bytes);
                         if &pubkey_hash[..] == spk_hash {
-                            return Ok(Some(
-                                PublicKey::from_slice(pubkey_bytes)
-                                    .map_err(SpError::Secp256k1Error)?,
-                            ));
+                            let pubkey = PublicKey::from_slice(pubkey_bytes)
+                                .map_err(SpError::Secp256k1Error)?;
+                            return Ok(Some(PerInput::new(txin, (pubkey))));
                         }
                     } else {
                         return Ok(None);
@@ -252,7 +236,7 @@ pub fn get_pubkey_from_input(
                             value.len() == COMPRESSED_PUBKEY_SIZE,
                         ) {
                             (Ok(pubkey), true) => {
-                                return Ok(Some(pubkey));
+                                return Ok(Some(PerInput::new(txin, pubkey)));
                             }
                             (_, false) => {
                                 return Ok(None);
@@ -278,7 +262,7 @@ pub fn get_pubkey_from_input(
                         value.len() == COMPRESSED_PUBKEY_SIZE,
                     ) {
                         (Ok(pubkey), true) => {
-                            return Ok(Some(pubkey));
+                            return Ok(Some(PerInput::new(txin, pubkey)));
                         }
                         (_, false) => {
                             return Ok(None);
@@ -324,7 +308,10 @@ pub fn get_pubkey_from_input(
                 return XOnlyPublicKey::from_slice(&script_pub_key[2..34])
                     .map_err(SpError::Secp256k1Error)
                     .map(|x_only_public_key| {
-                        Some(PublicKey::from_x_only_public_key(x_only_public_key, Even))
+                        Some(PerInput::new(
+                            txin,
+                            x_only_public_key.public_key(secp256k1::Parity::Even),
+                        ))
                     });
             }
             (_, false) => {

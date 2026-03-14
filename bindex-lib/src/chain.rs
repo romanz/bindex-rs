@@ -189,9 +189,10 @@ impl IndexedChain {
             stats.indexed_blocks += 1;
         }
         let batches = builder.into_batches();
+        let entries: usize = batches.iter().map(|b| b.sptweak_rows).sum();
         stats.elapsed = t.elapsed();
         info!(
-            "block={} height={}: indexed {} blocks, {:.3}[MB], dt = {:.3}[s]: {:.3} [ms/block], {:.3} [MB/block], {:.3} [MB/s]",
+            "block={} height={}: indexed {} blocks, {:.3}[MB], dt = {:.3}[s]: {:.3} [ms/block], {:.3} [MB/block], {:.3} [MB/s] = {}k entries",
             self.headers.tip_hash(),
             self.headers.tip_height().unwrap(),
             stats.indexed_blocks,
@@ -200,8 +201,9 @@ impl IndexedChain {
             stats.elapsed.as_secs_f64() * 1e3 / (stats.indexed_blocks as f64),
             stats.size_read as f64 / (1e6 * stats.indexed_blocks as f64),
             stats.size_read as f64 / (1e6 * stats.elapsed.as_secs_f64()),
+            entries as f64 / 1e3,
         );
-        if self.headers.tip_height().unwrap_or_default() >= 57000 {
+        if self.headers.tip_height().unwrap_or_default() >= 71000 {
             return Err(Error::NotSupported);
         }
         self.store.write(&batches)?;

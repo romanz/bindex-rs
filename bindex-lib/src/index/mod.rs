@@ -147,7 +147,7 @@ pub struct Batch {
     pub scripthash_rows: Vec<HashPrefixRow>,
     pub txid_rows: Vec<HashPrefixRow>,
     pub txpos_rows: Vec<txpos::TxBlockPosRow>,
-    pub sptweak_rows: Vec<sptweak::TxTweakRow>,
+    pub sptweak_rows: usize,
     pub header: IndexedHeader,
 }
 
@@ -181,14 +181,14 @@ impl Batch {
         let txnum = txpos.next_txnum;
         assert_eq!(txnum, scripthash.next_txnum);
         assert_eq!(txnum, txid.next_txnum);
-        assert_eq!(txnum, sptweak.next_txnum);
+        // assert_eq!(txnum, sptweak.next_txnum);
 
         let header = bitcoin::consensus::encode::deserialize(block.header())?;
         Ok(Batch {
             scripthash_rows: scripthash.rows,
             txpos_rows: txpos.rows,
             txid_rows: txid.rows,
-            sptweak_rows: sptweak.rows,
+            sptweak_rows: sptweak,
             header: IndexedHeader::new(txnum, hash, header),
         })
     }

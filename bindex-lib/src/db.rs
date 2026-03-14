@@ -106,16 +106,6 @@ impl DB {
             f(&mut write_batch, cf, row, b"");
         }
 
-        // key = next_txnum || txid, value = sptweak
-        let cf = self.cf(SPTWEAK_CF);
-        // Rows are sorted by `txnum`.
-        for batch in batches {
-            for row in &batch.sptweak_rows {
-                let (key, value) = row.serialize(&batch.header);
-                f(&mut write_batch, cf, &key, &value)
-            }
-        }
-
         // key = last_txnum, value = chunk of offsets
         let cf = self.cf(TXPOS_CF);
         // Rows are sorted by `txnum`.
@@ -149,11 +139,6 @@ impl DB {
                 .iter()
                 .map(|b| b.scripthash_rows.len())
                 .sum::<usize>()
-        );
-        log::info!(
-            "{}: {} rows",
-            SPTWEAK_CF,
-            batches.iter().map(|b| b.sptweak_rows.len()).sum::<usize>()
         );
         log::info!("{}: {} rows", HEADERS_CF, batches.len());
         let opts = rocksdb::WriteOptions::default();

@@ -4,3 +4,6 @@ members = [
     "bindex-cli",
     "bindex-lib",
 ]
+
+[profile.release]
+debug = true
