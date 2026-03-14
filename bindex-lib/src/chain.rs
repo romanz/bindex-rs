@@ -189,6 +189,21 @@ impl IndexedChain {
             stats.indexed_blocks += 1;
         }
         let batches = builder.into_batches();
+        stats.elapsed = t.elapsed();
+        info!(
+            "block={} height={}: indexed {} blocks, {:.3}[MB], dt = {:.3}[s]: {:.3} [ms/block], {:.3} [MB/block], {:.3} [MB/s]",
+            self.headers.tip_hash(),
+            self.headers.tip_height().unwrap(),
+            stats.indexed_blocks,
+            stats.size_read as f64 / (1e6),
+            stats.elapsed.as_secs_f64(),
+            stats.elapsed.as_secs_f64() * 1e3 / (stats.indexed_blocks as f64),
+            stats.size_read as f64 / (1e6 * stats.indexed_blocks as f64),
+            stats.size_read as f64 / (1e6 * stats.elapsed.as_secs_f64()),
+        );
+        if self.headers.tip_height().unwrap_or_default() >= 57000 {
+            return Err(Error::NotSupported);
+        }
         self.store.write(&batches)?;
         for batch in batches {
             self.headers.add(batch.header);
@@ -197,17 +212,6 @@ impl IndexedChain {
         stats.elapsed = t.elapsed();
         if stats.indexed_blocks > 0 {
             self.store.flush()?;
-            info!(
-                "block={} height={}: indexed {} blocks, {:.3}[MB], dt = {:.3}[s]: {:.3} [ms/block], {:.3} [MB/block], {:.3} [MB/s]",
-                self.headers.tip_hash(),
-                self.headers.tip_height().unwrap(),
-                stats.indexed_blocks,
-                stats.size_read as f64 / (1e6),
-                stats.elapsed.as_secs_f64(),
-                stats.elapsed.as_secs_f64() * 1e3 / (stats.indexed_blocks as f64),
-                stats.size_read as f64 / (1e6 * stats.indexed_blocks as f64),
-                stats.size_read as f64 / (1e6 * stats.elapsed.as_secs_f64()),
-            );
         } else {
             // Start autocompactions when there are no new indexed blocks
             self.store.start_compactions()?;
