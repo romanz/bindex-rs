@@ -1,12 +1,10 @@
-use bitcoin::Transaction;
 use bitcoin::{consensus::Decodable, secp256k1, Txid};
 use bitcoin::{
     hashes::{sha256t_hash_newtype, Hash, HashEngine},
     OutPoint,
 };
+use bitcoin::{Transaction, Witness};
 use secp256k1::{PublicKey, Scalar};
-
-use silentpayments::utils::receiving::get_pubkey_from_input;
 
 use crate::index::{self, BlockBytes, Error, IndexedBlock, SpentBytes, TxNum};
 
@@ -45,10 +43,13 @@ impl PerInput {
         }
     }
 
-    fn combine(&self, other: &PerInput) -> Result<Self, secp256k1::Error> {
+    fn combine(&self, other: &PerInput) -> Result<Self, SpError> {
         Ok(PerInput {
             outpoint: self.outpoint.min(other.outpoint),
-            pubkey: self.pubkey.combine(&other.pubkey)?,
+            pubkey: self
+                .pubkey
+                .combine(&other.pubkey)
+                .map_err(SpError::Secp256k1Error)?,
         })
     }
 }
@@ -80,7 +81,7 @@ pub fn index(
                 .filter_map(|(txin, spent_txout)| {
                     match get_pubkey_from_input(
                         txin.script_sig.as_bytes(),
-                        &txin.witness.to_vec(),
+                        &txin.witness,
                         spent_txout.script_pubkey.as_bytes(),
                     ) {
                         Ok(input_pubkey) => {
@@ -159,4 +160,203 @@ fn decode_spent(buf: &[u8]) -> Result<Vec<Vec<bitcoin::TxOut>>, Error> {
         block_result.push(tx_result);
     }
     Ok(block_result)
+}
+
+/// [BIP341](https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki)-defined 'Nothing Up My Sleeve' point.
+pub const NUMS_H: [u8; 32] = [
+    0x50, 0x92, 0x9b, 0x74, 0xc1, 0xa0, 0x49, 0x54, 0xb7, 0x8b, 0x4b, 0x60, 0x35, 0xe9, 0x7a, 0x5e,
+    0x07, 0x8a, 0x5a, 0x0f, 0x28, 0xec, 0x96, 0xd5, 0x47, 0xbf, 0xee, 0x9a, 0xce, 0x80, 0x3a, 0xc0,
+];
+
+// Define OP_CODES used in script template matching for readability
+const OP_1: u8 = 0x51;
+const OP_0: u8 = 0x00;
+const OP_PUSHBYTES_20: u8 = 0x14;
+const OP_PUSHBYTES_32: u8 = 0x20;
+const OP_HASH160: u8 = 0xA9;
+const OP_EQUAL: u8 = 0x87;
+const OP_DUP: u8 = 0x76;
+const OP_EQUALVERIFY: u8 = 0x88;
+const OP_CHECKSIG: u8 = 0xAC;
+
+// Only compressed pubkeys are supported for silent payments
+const COMPRESSED_PUBKEY_SIZE: usize = 33;
+
+#[derive(thiserror::Error, Debug)]
+enum SpError {
+    #[error("invalid vin: {0}")]
+    InvalidVin(&'static str),
+    #[error("secp256k1 error: {0}")]
+    Secp256k1Error(secp256k1::Error),
+}
+
+/// Get the public keys from a set of input data.
+///
+/// # Arguments
+///
+/// * `script_sig` - The script signature as a byte array.
+/// * `txinwitness` - The witness data.
+/// * `script_pub_key` - The scriptpubkey from the output spent. This requires looking up the previous output.
+///
+/// # Returns
+///
+/// If no errors occur, this function will optionally return a [PublicKey] if this input is silent payment-eligible.
+///
+/// # Errors
+///
+/// This function will error if:
+///
+/// * The provided Vin data is incorrect.
+pub fn get_pubkey_from_input(
+    script_sig: &[u8],
+    txinwitness: &Witness,
+    script_pub_key: &[u8],
+) -> Result<Option<PublicKey>, SpError> {
+    use bitcoin::hashes::{hash160, Hash};
+    use secp256k1::PublicKey;
+    use secp256k1::{Parity::Even, XOnlyPublicKey};
+
+    if is_p2pkh(script_pub_key) {
+        match (txinwitness.is_empty(), script_sig.is_empty()) {
+            (true, false) => {
+                let spk_hash = &script_pub_key[3..23];
+                for i in (COMPRESSED_PUBKEY_SIZE..=script_sig.len()).rev() {
+                    if let Some(pubkey_bytes) = script_sig.get(i - COMPRESSED_PUBKEY_SIZE..i) {
+                        let pubkey_hash = hash160::Hash::hash(pubkey_bytes);
+                        if &pubkey_hash[..] == spk_hash {
+                            return Ok(Some(
+                                PublicKey::from_slice(pubkey_bytes)
+                                    .map_err(SpError::Secp256k1Error)?,
+                            ));
+                        }
+                    } else {
+                        return Ok(None);
+                    }
+                }
+            }
+            (_, true) => return Err(SpError::InvalidVin("Empty script_sig for spending a p2pkh")),
+            (false, _) => {
+                return Err(SpError::InvalidVin(
+                    "non empty witness for spending a p2pkh",
+                ))
+            }
+        }
+    } else if is_p2sh(script_pub_key) {
+        match (txinwitness.is_empty(), script_sig.is_empty()) {
+            (false, false) => {
+                let redeem_script = &script_sig[1..];
+                if is_p2wpkh(redeem_script) {
+                    if let Some(value) = txinwitness.last() {
+                        match (
+                            PublicKey::from_slice(value),
+                            value.len() == COMPRESSED_PUBKEY_SIZE,
+                        ) {
+                            (Ok(pubkey), true) => {
+                                return Ok(Some(pubkey));
+                            }
+                            (_, false) => {
+                                return Ok(None);
+                            }
+                            // Not sure how we could get an error here, so just return none for now
+                            // if the pubkey cant be parsed
+                            (Err(_), _) => {
+                                return Ok(None);
+                            }
+                        }
+                    }
+                }
+            }
+            (_, true) => return Err(SpError::InvalidVin("Empty script_sig for spending a p2sh")),
+            (true, false) => return Ok(None),
+        }
+    } else if is_p2wpkh(script_pub_key) {
+        match (txinwitness.is_empty(), script_sig.is_empty()) {
+            (false, true) => {
+                if let Some(value) = txinwitness.last() {
+                    match (
+                        PublicKey::from_slice(value),
+                        value.len() == COMPRESSED_PUBKEY_SIZE,
+                    ) {
+                        (Ok(pubkey), true) => {
+                            return Ok(Some(pubkey));
+                        }
+                        (_, false) => {
+                            return Ok(None);
+                        }
+                        // Not sure how we could get an error here, so just return none for now
+                        // if the pubkey cant be parsed
+                        (Err(_), _) => {
+                            return Ok(None);
+                        }
+                    }
+                } else {
+                    return Err(SpError::InvalidVin("Empty witness"));
+                }
+            }
+            (_, false) => {
+                return Err(SpError::InvalidVin(
+                    "Non empty script sig for spending a segwit output",
+                ))
+            }
+            (true, _) => {
+                return Err(SpError::InvalidVin(
+                    "Empty witness for spending a segwit output",
+                ))
+            }
+        }
+    } else if is_p2tr(script_pub_key) {
+        match (txinwitness.is_empty(), script_sig.is_empty()) {
+            (false, true) => {
+                // check for the optional annex
+                let annex = match txinwitness.last().and_then(|value| value.first()) {
+                    Some(&0x50) => 1,
+                    Some(_) => 0,
+                    None => return Err(SpError::InvalidVin("Empty or invalid witness")),
+                };
+
+                // Check for script path
+                let stack_size = txinwitness.len();
+                if stack_size > annex && txinwitness[stack_size - annex - 1][1..33] == NUMS_H {
+                    return Ok(None);
+                }
+
+                // Return the pubkey from the script pubkey
+                return XOnlyPublicKey::from_slice(&script_pub_key[2..34])
+                    .map_err(SpError::Secp256k1Error)
+                    .map(|x_only_public_key| {
+                        Some(PublicKey::from_x_only_public_key(x_only_public_key, Even))
+                    });
+            }
+            (_, false) => {
+                return Err(SpError::InvalidVin(
+                    "Non empty script sig for spending a segwit output",
+                ))
+            }
+            (true, _) => {
+                return Err(SpError::InvalidVin(
+                    "Empty witness for spending a segwit output",
+                ))
+            }
+        }
+    }
+    Ok(None)
+}
+
+// script templates for inputs allowed in BIP352 shared secret derivation
+
+/// Check if a script_pub_key is taproot.
+fn is_p2tr(spk: &[u8]) -> bool {
+    matches!(spk, [OP_1, OP_PUSHBYTES_32, ..] if spk.len() == 34)
+}
+
+fn is_p2wpkh(spk: &[u8]) -> bool {
+    matches!(spk, [OP_0, OP_PUSHBYTES_20, ..] if spk.len() == 22)
+}
+
+fn is_p2sh(spk: &[u8]) -> bool {
+    matches!(spk, [OP_HASH160, OP_PUSHBYTES_20, .., OP_EQUAL] if spk.len() == 23)
+}
+
+fn is_p2pkh(spk: &[u8]) -> bool {
+    matches!(spk, [OP_DUP, OP_HASH160, OP_PUSHBYTES_20, .., OP_EQUALVERIFY, OP_CHECKSIG] if spk.len() == 25)
 }
