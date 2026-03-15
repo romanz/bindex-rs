@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::{
     path::{Path, PathBuf},
@@ -39,6 +40,7 @@ pub struct Stats {
     pub indexed_blocks: usize,
     pub size_read: usize,
     pub elapsed: Duration,
+    pub rows: BTreeMap<char, usize>,
 }
 
 impl Stats {
@@ -48,6 +50,7 @@ impl Stats {
             indexed_blocks: 0,
             size_read: 0,
             elapsed: Duration::ZERO,
+            rows: BTreeMap::new(),
         }
     }
 }
@@ -189,30 +192,30 @@ impl IndexedChain {
             stats.indexed_blocks += 1;
         }
         let batches = builder.into_batches();
-        let entries: usize = batches.iter().map(|b| b.sptweak_rows).sum();
-        stats.elapsed = t.elapsed();
-        info!(
-            "block={} height={}: indexed {} blocks, {:.3}[MB], dt = {:.3}[s]: {:.3} [ms/block], {:.3} [MB/block], {:.3} [MB/s] = {}k entries",
-            self.headers.tip_hash(),
-            self.headers.tip_height().unwrap(),
-            stats.indexed_blocks,
-            stats.size_read as f64 / (1e6),
-            stats.elapsed.as_secs_f64(),
-            stats.elapsed.as_secs_f64() * 1e3 / (stats.indexed_blocks as f64),
-            stats.size_read as f64 / (1e6 * stats.indexed_blocks as f64),
-            stats.size_read as f64 / (1e6 * stats.elapsed.as_secs_f64()),
-            entries as f64 / 1e3,
-        );
-        if self.headers.tip_height().unwrap_or_default() >= 71000 {
-            return Err(Error::NotSupported);
+        for b in &batches {
+            *stats.rows.entry('S').or_default() += b.scripthash_rows.len();
+            *stats.rows.entry('I').or_default() += b.txid_rows.len();
+            *stats.rows.entry('P').or_default() += b.txpos_rows.len();
+            *stats.rows.entry('T').or_default() += b.sptweak_rows.len();
         }
         self.store.write(&batches)?;
         for batch in batches {
             self.headers.add(batch.header);
         }
-
-        stats.elapsed = t.elapsed();
         if stats.indexed_blocks > 0 {
+            stats.elapsed = t.elapsed();
+            info!(
+                "block={} height={}: indexed {} blocks, {:.3}[MB], dt = {:.3}[s]: {:.3} [ms/block], {:.3} [MB/block], {:.3} [MB/s] = {:?}",
+                self.headers.tip_hash(),
+                self.headers.tip_height().unwrap(),
+                stats.indexed_blocks,
+                stats.size_read as f64 / (1e6),
+                stats.elapsed.as_secs_f64(),
+                stats.elapsed.as_secs_f64() * 1e3 / (stats.indexed_blocks as f64),
+                stats.size_read as f64 / (1e6 * stats.indexed_blocks as f64),
+                stats.size_read as f64 / (1e6 * stats.elapsed.as_secs_f64()),
+                stats.rows,
+            );
             self.store.flush()?;
         } else {
             // Start autocompactions when there are no new indexed blocks

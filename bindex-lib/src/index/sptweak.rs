@@ -1,68 +1,70 @@
-use bitcoin::key::{Secp256k1, Verification};
+use bitcoin::Transaction;
 use bitcoin::{consensus::Decodable, secp256k1, Txid};
 use bitcoin::{
     hashes::{sha256t_hash_newtype, Hash, HashEngine},
     OutPoint,
 };
-use bitcoin::{Transaction, Witness, XOnlyPublicKey};
 use secp256k1::{PublicKey, Scalar};
 
 use crate::index::{self, BlockBytes, Error, IndexedBlock, SpentBytes, TxNum};
 
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub struct TxTweakRow {
     pub txid: Txid,
     pub tweak: secp256k1::PublicKey,
 }
 
 impl TxTweakRow {
-    const KEY_LEN: usize = TxNum::LEN + Txid::LEN;
+    const TXID_PREFIX_LEN: usize = 8;
+    const KEY_LEN: usize = TxNum::LEN + Self::TXID_PREFIX_LEN;
+    const LEN: usize = Self::KEY_LEN + secp256k1::constants::PUBLIC_KEY_SIZE;
 
-    pub fn serialize(
-        &self,
-        header: &index::IndexedHeader,
-    ) -> (
-        [u8; Self::KEY_LEN],
-        [u8; secp256k1::constants::PUBLIC_KEY_SIZE],
-    ) {
-        let mut key = [0; Self::KEY_LEN];
+    pub fn serialize(&self, header: &index::IndexedHeader) -> [u8; Self::LEN] {
+        let mut key = [0; Self::LEN];
+        // group by block height + order by txid prefix
+
         key[..TxNum::LEN].copy_from_slice(&header.next_txnum().serialize());
-        key[TxNum::LEN..].copy_from_slice(&self.txid[..]);
-        (key, self.tweak.serialize())
+        key[TxNum::LEN..Self::KEY_LEN].copy_from_slice(&self.txid[..Self::TXID_PREFIX_LEN]);
+        key[Self::KEY_LEN..].copy_from_slice(&self.tweak.serialize());
+        key
     }
 }
 
-struct PerInput {
-    outpoint: OutPoint,
+struct PerInput<'a> {
+    outpoint: &'a OutPoint,
     pubkey: PublicKey,
-    count: usize,
 }
 
-impl PerInput {
-    fn new(txin: bitcoin::TxIn, pubkey: PublicKey) -> Self {
+impl<'a> PerInput<'a> {
+    fn new(txin: &'a bitcoin::TxIn, pubkey: PublicKey) -> Self {
         Self {
-            outpoint: txin.previous_output,
+            outpoint: &txin.previous_output,
             pubkey,
-            count: 1,
         }
     }
 
-    fn combine(self, other: PerInput) -> Result<Self, SpError> {
+    fn combine(self, other: PerInput<'a>) -> Result<Self, SpError> {
         Ok(PerInput {
-            outpoint: self.outpoint.min(other.outpoint),
+            outpoint: self.outpoint.min(&other.outpoint),
             pubkey: self.pubkey.combine(&other.pubkey)?,
-            count: self.count + other.count,
         })
     }
 }
 
-pub fn index(block: &BlockBytes, spent: &SpentBytes, next_txnum: TxNum) -> Result<usize, Error> {
+pub fn index(
+    block: &BlockBytes,
+    spent: &SpentBytes,
+    next_txnum: TxNum,
+) -> Result<IndexedBlock<TxTweakRow>, Error> {
     let secp = secp256k1::Secp256k1::verification_only(); // OPTIMIZE
-    let mut result = 0;
+    let mut result = IndexedBlock::new(next_txnum);
     let block = bitcoin::Block::consensus_decode_from_finite_reader(&mut &block.0[..])?;
     let spent = decode_spent(&spent.0)?;
     assert_eq!(block.txdata.len(), spent.len());
     for (tx, txouts_spent) in block.txdata.into_iter().zip(spent.into_iter()) {
+        result.next_txnum.increment();
         if !maybe_silent_payment(&tx) {
+            // no taproot outputs, or coinbase
             continue;
         }
         assert_eq!(tx.input.len(), txouts_spent.len());
@@ -70,28 +72,29 @@ pub fn index(block: &BlockBytes, spent: &SpentBytes, next_txnum: TxNum) -> Resul
         // Iterate through each input of the transaction and collect its eligible pubkey:
         let per_input_entries = tx
             .input
-            .into_iter()
+            .iter()
             .zip(txouts_spent.into_iter())
             .filter_map(|(txin, spent_txout)| get_pubkey_from_input(txin, spent_txout).transpose());
 
         // Reduce into (smallest_outpoint, A_sum) pair:
-        let total = match per_input_entries
-            .into_iter()
-            .reduce(|a, b| a?.combine(b?))
-            .transpose()
-            .unwrap_or_default()
-        {
-            Some(total) => total,
+        let PerInput {
+            outpoint: smallest_outpoint,
+            pubkey: A_sum,
+        } = match per_input_entries.into_iter().reduce(|a, b| a?.combine(b?)) {
+            Some(Ok(total)) => total,
+            Some(Err(err)) => {
+                log::warn!("skipping {}: {}", tx.compute_txid(), err);
+                continue;
+            }
             None => continue,
         };
         // Calculate the tweak data based on the public keys and outpoints
-        let input_hash = InputsHash::from_outpoint_and_A_sum(total.outpoint, total.pubkey);
-        let tweak = total.pubkey
-            .mul_tweak(&secp, &input_hash.to_scalar())
+        let input_hash = InputsHash::from_outpoint_and_A_sum(smallest_outpoint, A_sum).to_scalar();
+        let tweak = A_sum
+            .mul_tweak(&secp, &input_hash)
             .expect("`mul_tweak()` failed");
-        let txid = tx.compute_txid();        
-
-        result += total.count;
+        let txid = tx.compute_txid();
+        result.rows.push(TxTweakRow { txid, tweak });
     }
     Ok(result)
 }
@@ -114,7 +117,7 @@ sha256t_hash_newtype! {
 }
 
 impl InputsHash {
-    fn from_outpoint_and_A_sum(smallest_outpoint: OutPoint, A_sum: PublicKey) -> InputsHash {
+    fn from_outpoint_and_A_sum(smallest_outpoint: &OutPoint, A_sum: PublicKey) -> InputsHash {
         let mut eng = InputsHash::engine();
         eng.input(&smallest_outpoint.txid[..]);
         eng.input(&smallest_outpoint.vout.to_le_bytes());
@@ -190,9 +193,9 @@ enum SpError {
 ///
 /// * The provided Vin data is incorrect.
 fn get_pubkey_from_input(
-    txin: bitcoin::TxIn,
+    txin: &bitcoin::TxIn,
     spent_txout: bitcoin::TxOut,
-) -> Result<Option<PerInput>, SpError> {
+) -> Result<Option<PerInput<'_>>, SpError> {
     use bitcoin::hashes::{hash160, Hash};
     use secp256k1::PublicKey;
     use secp256k1::XOnlyPublicKey;
@@ -211,7 +214,7 @@ fn get_pubkey_from_input(
                         if &pubkey_hash[..] == spk_hash {
                             let pubkey = PublicKey::from_slice(pubkey_bytes)
                                 .map_err(SpError::Secp256k1Error)?;
-                            return Ok(Some(PerInput::new(txin, (pubkey))));
+                            return Ok(Some(PerInput::new(txin, pubkey)));
                         }
                     } else {
                         return Ok(None);

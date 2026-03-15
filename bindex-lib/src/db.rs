@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Path};
+use std::path::Path;
 
 use crate::index::{self, TxBlockPosRow};
 
@@ -115,6 +115,18 @@ impl DB {
             .map(index::TxBlockPosRow::serialize)
             .for_each(|(k, v)| f(&mut write_batch, cf, &k, &v));
 
+        // key = next_txnum || txid_prefix || tweak
+        let cf = self.cf(SPTWEAK_CF);
+        // Batch are grouped by `txnum`.
+        for batch in batches {
+            let mut rows: Vec<&index::TxTweakRow> = batch.sptweak_rows.iter().collect();
+            // Sort row group by `txid` prefix.
+            rows.sort_unstable_by_key(|item| &item.txid);
+            for row in rows {
+                f(&mut write_batch, cf, &row.serialize(&batch.header), b"");
+            }
+        }
+
         // key = next_txnum, value = blockhash || blockheader
         let cf = self.cf(HEADERS_CF);
         for batch in batches {
@@ -122,25 +134,6 @@ impl DB {
             f(&mut write_batch, cf, &key, &value);
         }
 
-        log::info!(
-            "{}: {} rows",
-            TXID_CF,
-            batches.iter().map(|b| b.txid_rows.len()).sum::<usize>()
-        );
-        log::info!(
-            "{}: {} rows",
-            TXPOS_CF,
-            batches.iter().map(|b| b.txpos_rows.len()).sum::<usize>()
-        );
-        log::info!(
-            "{}: {} rows",
-            SCRIPT_HASH_CF,
-            batches
-                .iter()
-                .map(|b| b.scripthash_rows.len())
-                .sum::<usize>()
-        );
-        log::info!("{}: {} rows", HEADERS_CF, batches.len());
         let opts = rocksdb::WriteOptions::default();
         self.db.write_opt(write_batch, &opts)?;
         Ok(())
