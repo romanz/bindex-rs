@@ -77,10 +77,7 @@ pub fn index(
             .filter_map(|(txin, spent_txout)| get_pubkey_from_input(txin, spent_txout).transpose());
 
         // Reduce into (smallest_outpoint, A_sum) pair:
-        let PerInput {
-            outpoint: smallest_outpoint,
-            pubkey: A_sum,
-        } = match per_input_entries.into_iter().reduce(|a, b| a?.combine(b?)) {
+        let total = match per_input_entries.into_iter().reduce(|a, b| a?.combine(b?)) {
             Some(Ok(total)) => total,
             Some(Err(err)) => {
                 log::warn!("skipping {}: {}", tx.compute_txid(), err);
@@ -89,10 +86,7 @@ pub fn index(
             None => continue,
         };
         // Calculate the tweak data based on the public keys and outpoints
-        let input_hash = InputsHash::from_outpoint_and_A_sum(smallest_outpoint, A_sum).to_scalar();
-        let tweak = A_sum
-            .mul_tweak(&secp, &input_hash)
-            .expect("`mul_tweak()` failed");
+        let tweak = compute_tweak(total, &secp);
         let txid = tx.compute_txid();
         result.rows.push(TxTweakRow { txid, tweak });
     }
@@ -104,6 +98,17 @@ fn maybe_silent_payment(tx: &Transaction) -> bool {
         return false;
     }
     return tx.output.iter().any(|txo| txo.script_pubkey.is_p2tr());
+}
+
+fn compute_tweak(total: PerInput, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) -> PublicKey {
+    let PerInput {
+        outpoint: smallest_outpoint,
+        pubkey: A_sum,
+    } = total;
+    let input_hash = InputsHash::from_outpoint_and_A_sum(smallest_outpoint, A_sum).to_scalar();
+    A_sum
+        .mul_tweak(&secp, &input_hash)
+        .expect("`mul_tweak()` failed")
 }
 
 sha256t_hash_newtype! {
