@@ -103,10 +103,10 @@ fn maybe_silent_payment(tx: &Transaction) -> bool {
 fn compute_tweak(total: PerInput, secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>) -> PublicKey {
     let PerInput {
         outpoint: smallest_outpoint,
-        pubkey: A_sum,
+        pubkey: sum_pubkeys,
     } = total;
-    let input_hash = InputsHash::from_outpoint_and_A_sum(smallest_outpoint, A_sum).to_scalar();
-    A_sum
+    let input_hash = InputsHash::new(smallest_outpoint, sum_pubkeys).to_scalar();
+    sum_pubkeys
         .mul_tweak(&secp, &input_hash)
         .expect("`mul_tweak()` failed")
 }
@@ -122,11 +122,11 @@ sha256t_hash_newtype! {
 }
 
 impl InputsHash {
-    fn from_outpoint_and_A_sum(smallest_outpoint: &OutPoint, A_sum: PublicKey) -> InputsHash {
+    fn new(smallest_outpoint: &OutPoint, sum_pubkeys: PublicKey) -> InputsHash {
         let mut eng = InputsHash::engine();
         eng.input(&smallest_outpoint.txid[..]);
         eng.input(&smallest_outpoint.vout.to_le_bytes());
-        eng.input(&A_sum.serialize());
+        eng.input(&sum_pubkeys.serialize());
         InputsHash::from_engine(eng)
     }
     fn to_scalar(self) -> Scalar {
