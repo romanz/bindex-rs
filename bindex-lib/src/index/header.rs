@@ -1,6 +1,10 @@
-use bitcoin::{consensus::Encodable as _, hashes::Hash as _, BlockHash};
+use bitcoin::{
+    consensus::{encode, Encodable as _},
+    hashes::Hash as _,
+    BlockHash,
+};
 
-use crate::index::TxNum;
+use crate::index::{self, TxNum};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct IndexedHeader {
@@ -18,12 +22,12 @@ impl IndexedHeader {
     pub fn new(
         next_txnum: TxNum,
         hash: bitcoin::BlockHash,
-        header: bitcoin::block::Header,
+        block_bytes: &index::BlockBytes,
     ) -> Self {
         Self {
             next_txnum,
             hash,
-            header,
+            header: encode::deserialize(block_bytes.header()).expect("invalid header bytes"),
         }
     }
 

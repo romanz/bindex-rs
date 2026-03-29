@@ -4,6 +4,7 @@ use std::{
     time::Duration,
 };
 
+use bitcoin::BlockHash;
 use bitcoin::{hashes::Hash, Network};
 use log::*;
 
@@ -63,6 +64,76 @@ pub struct IndexedChain {
 pub struct Config {
     db_path: PathBuf,
     url: String,
+}
+
+struct HeaderChunk {
+    headers: Vec<bitcoin::block::Header>,
+    to_skip: usize,
+}
+
+impl HeaderChunk {
+    fn get(&self) -> &[bitcoin::block::Header] {
+        &self.headers[self.to_skip..]
+    }
+}
+
+struct PerBlockData {
+    blockhash: BlockHash,
+    block_bytes: index::BlockBytes,
+    spent_bytes: index::SpentBytes,
+    txs_count: u32,
+}
+
+struct Builder<'a> {
+    items: Vec<(index::TxNumRange, &'a PerBlockData)>,
+    tip: BlockHash,
+}
+
+impl<'a> Builder<'a> {
+    fn new(tip: Option<&index::IndexedHeader>, items: &'a [PerBlockData]) -> Self {
+        let mut next_txnum = tip.map_or_else(index::TxNum::default, |header| header.next_txnum());
+        let tip = tip.map_or_else(bitcoin::BlockHash::all_zeros, |header| header.hash());
+
+        let items = items
+            .iter()
+            .map(|data| {
+                let first_txnum = next_txnum;
+                next_txnum.increment_by(data.txs_count);
+                let range = index::TxNumRange::new(first_txnum, next_txnum);
+                (range, data)
+            })
+            .collect();
+        Self { items, tip }
+    }
+
+    fn build(self) -> Result<Vec<index::Batch>, Error> {
+        use rayon::prelude::*;
+
+        for pair in self.items.windows(2) {
+            assert!(index::TxNumRange::adjacent(&pair[0].0, &pair[1].0));
+        }
+        let batches = self
+            .items
+            .into_par_iter()
+            .map(|(txnum_range, data)| {
+                let PerBlockData {
+                    blockhash,
+                    block_bytes,
+                    spent_bytes,
+                    txs_count,
+                } = data;
+                assert_eq!(txnum_range.len(), *txs_count);
+                index::Batch::build(txnum_range, *blockhash, block_bytes, spent_bytes)
+            })
+            .collect::<Result<Vec<_>, index::Error>>()?;
+        let mut tip = self.tip;
+        for batch in &batches {
+            let header = &batch.header;
+            assert_eq!(tip, header.header().prev_blockhash);
+            tip = header.hash();
+        }
+        Ok(batches)
+    }
 }
 
 impl IndexedChain {
@@ -130,21 +201,14 @@ impl IndexedChain {
             .pop()
             .expect("cannot drop tip of an empty chain");
         // "Re-index" stale block in order to delete its entries from the DB
-        let stale_hash = stale.hash();
-        let mut builder = index::IndexBuilder::new(self.headers.tip());
-        builder.add(
-            stale_hash,
-            &self.client.get_block_bytes(stale_hash)?,
-            &self.client.get_spent_bytes(stale_hash)?,
-        )?;
-        self.store.delete(&builder.into_batches())?;
-        Ok(stale_hash)
+        // let stale_hash = stale.hash();
+        // let mut builder: index::IndexBuilder = index::IndexBuilder::new(self.headers.tip());
+        // builder.add(stale_hash, &self.fetch_data(stale_hash)?)?;
+        self.store.delete(&self.index(&[*stale.header()], None)?)?;
+        Ok(stale.hash())
     }
 
-    fn fetch_new_headers(
-        &mut self,
-        limit: usize,
-    ) -> Result<impl IntoIterator<Item = bitcoin::block::Header>, Error> {
+    fn fetch_new_headers(&mut self, limit: usize) -> Result<HeaderChunk, Error> {
         loop {
             // usually the first header is already part of the current chain
             let (mut blockhash, mut to_skip) = (self.headers.tip_hash(), 1);
@@ -154,7 +218,7 @@ impl IndexedChain {
             }
             let headers = self.client.get_headers(blockhash, limit)?;
             if !headers.is_empty() {
-                return Ok(headers.into_iter().skip(to_skip));
+                return Ok(HeaderChunk { headers, to_skip });
             }
             warn!(
                 "block={} height={} was rolled back",
@@ -166,29 +230,59 @@ impl IndexedChain {
         }
     }
 
+    fn fetch_data(&self, blockhash: BlockHash) -> Result<PerBlockData, Error> {
+        // TODO: can be done concurrently
+        let block_bytes = self.client.get_block_bytes(blockhash)?;
+        let spent_bytes = self.client.get_spent_bytes(blockhash)?;
+        let txs_count = block_bytes.txs_count();
+        assert_eq!(txs_count, spent_bytes.txs_count());
+        Ok(PerBlockData {
+            blockhash,
+            block_bytes,
+            spent_bytes,
+            txs_count,
+        })
+    }
+
+    fn index(
+        &self,
+        headers: &[bitcoin::block::Header],
+        mut stats: Option<&mut Stats>,
+    ) -> Result<Vec<index::Batch>, Error> {
+        use rayon::prelude::*;
+
+        let mut batches = Vec::with_capacity(headers.len());
+        for chunk in headers.chunks(10) {
+            let items: Vec<_> = chunk
+                .par_iter()
+                .map(|header| self.fetch_data(header.block_hash()))
+                .collect::<Result<Vec<_>, Error>>()?;
+
+            let tip = batches
+                .last()
+                .map_or_else(|| self.headers.tip(), |b: &index::Batch| Some(&b.header));
+            batches.extend(Builder::new(tip, &items).build()?);
+
+            for item in items {
+                if let Some(s) = stats.as_mut() {
+                    s.tip = item.blockhash;
+                    s.size_read += item.block_bytes.len() + item.spent_bytes.len();
+                    s.indexed_blocks += 1;
+                }
+            }
+        }
+        Ok(batches)
+    }
+
     /// Synchornize index with bitcoind.
     /// Compactions are started when no new blocks are indexed.
     pub fn sync(&mut self, limit: usize) -> Result<Stats, Error> {
         let t = std::time::Instant::now();
         // get new headers (and drop stale ones if needed)
-        let headers = self.fetch_new_headers(limit)?;
+        let chunk = self.fetch_new_headers(limit)?;
         // start indexing from a valid tip
         let mut stats = Stats::new(self.headers.tip_hash());
-
-        let mut builder = index::IndexBuilder::new(self.headers.tip());
-        for header in headers {
-            let blockhash = header.block_hash();
-            // TODO: can be done concurrently
-            let block_bytes = self.client.get_block_bytes(blockhash)?;
-            let spent_bytes = self.client.get_spent_bytes(blockhash)?;
-            builder.add(blockhash, &block_bytes, &spent_bytes)?;
-
-            stats.tip = blockhash;
-            stats.size_read += block_bytes.len();
-            stats.size_read += spent_bytes.len();
-            stats.indexed_blocks += 1;
-        }
-        let batches = builder.into_batches();
+        let batches = self.index(chunk.get(), Some(&mut stats))?;
         self.store.write(&batches)?;
         for batch in batches {
             self.headers.add(batch.header);

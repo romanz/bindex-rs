@@ -3,10 +3,8 @@ mod scripthash;
 mod txid;
 mod txpos;
 
-use bitcoin::{
-    hashes::{sha256d, Hash},
-    BlockHash,
-};
+use bitcoin::{hashes::sha256d, BlockHash};
+use bitcoin_slices::bsl;
 
 pub use header::IndexedHeader;
 pub use scripthash::ScriptHash;
@@ -69,8 +67,8 @@ impl TxNum {
         self.0.checked_sub(base.0)
     }
 
-    fn increment(&mut self) {
-        self.0 += 1;
+    pub fn increment_by(&mut self, delta: u32) {
+        self.0 = self.0.checked_add(delta).expect("txnum overflow");
     }
 
     pub fn serialize(&self) -> [u8; Self::LEN] {
@@ -79,6 +77,27 @@ impl TxNum {
 
     pub fn deserialize(bytes: [u8; Self::LEN]) -> Self {
         Self(u32::from_be_bytes(bytes))
+    }
+}
+
+pub struct TxNumRange {
+    first: TxNum,
+    next: TxNum,
+    len: u32,
+}
+
+impl TxNumRange {
+    pub fn new(first: TxNum, next: TxNum) -> Self {
+        let len = next.offset_from(first).expect("invalid range");
+        Self { first, next, len }
+    }
+
+    pub fn adjacent(prev: &TxNumRange, next: &TxNumRange) -> bool {
+        prev.next == next.first
+    }
+
+    pub fn len(&self) -> u32 {
+        self.len
     }
 }
 
@@ -120,12 +139,16 @@ impl BlockBytes {
         BlockBytes(data)
     }
 
-    fn header(&self) -> &[u8] {
+    pub fn header(&self) -> &[u8] {
         &self.0[..bitcoin::block::Header::SIZE]
     }
 
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn txs_count(&self) -> u32 {
+        parse_txs_count(&self.0[bitcoin::block::Header::SIZE..])
     }
 }
 
@@ -139,13 +162,18 @@ impl SpentBytes {
     pub fn len(&self) -> usize {
         self.0.len()
     }
+
+    pub fn txs_count(&self) -> u32 {
+        parse_txs_count(&self.0)
+    }
 }
 
-pub struct Batch {
-    pub scripthash_rows: Vec<HashPrefixRow>,
-    pub txid_rows: Vec<HashPrefixRow>,
-    pub txpos_rows: Vec<txpos::TxBlockPosRow>,
-    pub header: IndexedHeader,
+fn parse_txs_count(slice: &[u8]) -> u32 {
+    let mut consumed = 0;
+    bsl::scan_len(slice, &mut consumed)
+        .expect("cannot parse txs count")
+        .try_into()
+        .expect("txs count too large")
 }
 
 struct IndexedBlock<R> {
@@ -162,64 +190,36 @@ impl<R> IndexedBlock<R> {
     }
 }
 
+pub struct Batch {
+    pub scripthash_rows: Vec<HashPrefixRow>,
+    pub txid_rows: Vec<HashPrefixRow>,
+    pub txpos_rows: Vec<txpos::TxBlockPosRow>,
+    pub header: IndexedHeader,
+}
+
 impl Batch {
-    fn build(
-        hash: BlockHash,
-        txnum: TxNum,
+    pub fn build(
+        txnum_range: TxNumRange,
+        blockhash: BlockHash,
         block: &BlockBytes,
         spent: &SpentBytes,
     ) -> Result<Self, Error> {
-        let scripthash = scripthash::index(block, spent, txnum)?;
-        let txpos = txpos::index(block, txnum)?;
-        let txid = txid::index(block, txnum)?;
+        let first_txnum = txnum_range.first;
+        let scripthash = scripthash::index(block, spent, first_txnum)?;
+        let txpos = txpos::index(block, first_txnum)?;
+        let txid = txid::index(block, first_txnum)?;
 
         // All must have the same number of transactions
-        let txnum = txpos.next_txnum;
-        assert_eq!(txnum, scripthash.next_txnum);
-        assert_eq!(txnum, txid.next_txnum);
+        assert_eq!(txnum_range.next, scripthash.next_txnum);
+        assert_eq!(txnum_range.next, txpos.next_txnum);
+        assert_eq!(txnum_range.next, txid.next_txnum);
 
-        let header = bitcoin::consensus::encode::deserialize(block.header())?;
         Ok(Batch {
             scripthash_rows: scripthash.rows,
             txpos_rows: txpos.rows,
             txid_rows: txid.rows,
-            header: IndexedHeader::new(txnum, hash, header),
+            header: IndexedHeader::new(txnum_range.next, blockhash, block),
         })
-    }
-}
-
-pub struct IndexBuilder {
-    batches: Vec<Batch>,
-    next_txnum: TxNum,
-    tip: bitcoin::BlockHash,
-}
-
-impl IndexBuilder {
-    pub fn new(tip: Option<&header::IndexedHeader>) -> Self {
-        Self {
-            batches: vec![],
-            next_txnum: tip.map_or_else(TxNum::default, |header| header.next_txnum()),
-            tip: tip.map_or_else(bitcoin::BlockHash::all_zeros, |header| header.hash()),
-        }
-    }
-
-    pub fn add(
-        &mut self,
-        hash: bitcoin::BlockHash,
-        block_bytes: &BlockBytes,
-        spent_bytes: &SpentBytes,
-    ) -> Result<(), Error> {
-        let batch = Batch::build(hash, self.next_txnum, block_bytes, spent_bytes)?;
-        let header = &batch.header;
-        assert_eq!(header.header().prev_blockhash, self.tip);
-        self.next_txnum = header.next_txnum();
-        self.tip = header.hash();
-        self.batches.push(batch);
-        Ok(())
-    }
-
-    pub fn into_batches(self) -> Vec<Batch> {
-        self.batches
     }
 }
 

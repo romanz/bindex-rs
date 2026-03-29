@@ -14,7 +14,7 @@ impl bitcoin_slices::Visitor for IndexVisitor<'_> {
         self.result
             .rows
             .push(HashPrefixRow::new(prefix, self.result.next_txnum));
-        self.result.next_txnum.increment();
+        self.result.next_txnum.increment_by(1);
         ControlFlow::Continue(())
     }
 }
