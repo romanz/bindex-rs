@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: rustfmt, clippy
@@ -31,7 +31,7 @@ jobs:
     - name: Install other dependencies
       run: sudo apt-get -qqy install build-essential libclang-dev
 
-    - uses: actions/cache@v4
+    - uses: actions/cache@v5
       with:
         path: |
           ~/.cargo/bin/
@@ -69,7 +69,7 @@ jobs:
     - name: Clippy
       run: cargo clippy --release --all --locked -- -D warnings
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v7
       with:
         name: cargo-build-timings
         path: cargo-timing-*.html
