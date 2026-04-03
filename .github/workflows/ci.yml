@@ -57,8 +57,8 @@ jobs:
 
     - name: Test
       run: |
-        wget -q ${BITCOIND_URL}/${BITCOIND_VER}-x86_64-linux-gnu.tar.gz
-        tar xvf ${BITCOIND_VER}-x86_64-linux-gnu.tar.gz
+        wget --no-verbose ${BITCOIND_URL}/${BITCOIND_VER}-x86_64-linux-gnu.tar.gz
+        tar xvf ${BITCOIND_VER}-x86_64-linux-gnu.tar.gz ${BITCOIND_VER}/bin/bitcoind
         export BITCOIND_EXE=${PWD}/${BITCOIND_VER}/bin/bitcoind
         ${BITCOIND_EXE} --version
         cargo test --release --all --locked
