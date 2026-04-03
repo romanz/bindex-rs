@@ -11,6 +11,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  DEBIAN_FRONTEND: noninteractive
+  BITCOIND_URL: https://bitcoincore.org/bin/bitcoin-core-31.0/test.rc2
+  BITCOIND_VER: bitcoin-31.0rc2
 
 jobs:
   ubuntu_noble:
@@ -53,8 +56,12 @@ jobs:
         bindex-cli --help
 
     - name: Test
-      # Skip bitcoind-related tests until 31.0 is released
-      run: cargo test --release --all --locked -- --skip bitcoind
+      run: |
+        wget -q ${BITCOIND_URL}/${BITCOIND_VER}-x86_64-linux-gnu.tar.gz
+        tar xvf ${BITCOIND_VER}-x86_64-linux-gnu.tar.gz
+        export BITCOIND_EXE=${PWD}/${BITCOIND_VER}/bin/bitcoind
+        ${BITCOIND_EXE} --version
+        cargo test --release --all --locked
 
     - name: Format
       run: cargo fmt --all -- --check
