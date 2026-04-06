@@ -182,7 +182,6 @@ impl DB {
     }
 
     /// Collect a list of `TxNum`s for specified `txid`.
-    #[allow(dead_code)]
     pub fn scan_by_txid(&self, txid: &bitcoin::Txid) -> Result<Vec<index::TxNum>, rocksdb::Error> {
         let cf = self.cf(TXID_CF);
         let mut txnums = Vec::new();
