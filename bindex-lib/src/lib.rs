@@ -1,4 +1,5 @@
 pub use bitcoin;
+pub use bitcoin_slices;
 
 #[cfg(feature = "cache")]
 pub mod cache;
