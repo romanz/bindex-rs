@@ -28,4 +28,7 @@ rust-rocksdb = { version = "0.36.0", default-features = false, features = ["zstd
 hex_lit = "0.1"
 # bitcoind path should be specified via BITCOIND_EXE
 corepc-node = { version = "0.10", default-features = false, features = ["29_0"] }
+serde = "1.0"
+serde_json = "1.0"
 tempfile = "3"
+silentpayments = { git = "https://github.com/cygnet3/spdk", rev = "ce68148d8621e58a33abe251e28b7587b04998dd" }

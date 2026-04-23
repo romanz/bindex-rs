@@ -8,6 +8,7 @@ use bitcoin::BlockHash;
 use bitcoin::{hashes::Hash, Network};
 use log::*;
 
+use crate::index::Context;
 use crate::{client, db, headers, index, Location};
 
 #[derive(thiserror::Error, Debug)]
@@ -85,6 +86,7 @@ struct PerBlockData {
 }
 
 struct Builder<'a> {
+    ctx: Context,
     items: Vec<(index::TxNumRange, &'a PerBlockData)>,
     tip: BlockHash,
 }
@@ -103,7 +105,8 @@ impl<'a> Builder<'a> {
                 (range, data)
             })
             .collect();
-        Self { items, tip }
+        let ctx = index::Context::new();
+        Self { ctx, items, tip }
     }
 
     fn build(self) -> Result<Vec<index::Batch>, Error> {
@@ -123,7 +126,8 @@ impl<'a> Builder<'a> {
                     txs_count,
                 } = data;
                 assert_eq!(txnum_range.len(), *txs_count);
-                index::Batch::build(txnum_range, *blockhash, block_bytes, spent_bytes)
+                self.ctx
+                    .index(txnum_range, *blockhash, block_bytes, spent_bytes)
             })
             .collect::<Result<Vec<_>, index::Error>>()?;
         let mut tip = self.tip;
@@ -252,7 +256,7 @@ impl IndexedChain {
         use rayon::prelude::*;
 
         let mut batches = Vec::with_capacity(headers.len());
-        for chunk in headers.chunks(10) {
+        for chunk in headers.chunks(128) {
             let items: Vec<_> = chunk
                 .par_iter()
                 .map(|header| self.fetch_data(header.block_hash()))
@@ -287,10 +291,8 @@ impl IndexedChain {
         for batch in batches {
             self.headers.add(batch.header);
         }
-
-        stats.elapsed = t.elapsed();
         if stats.indexed_blocks > 0 {
-            self.store.flush()?;
+            stats.elapsed = t.elapsed();
             info!(
                 "block={} height={}: indexed {} blocks, {:.3}[MB], dt = {:.3}[s]: {:.3} [ms/block], {:.3} [MB/block], {:.3} [MB/s]",
                 self.headers.tip_hash(),
@@ -302,6 +304,7 @@ impl IndexedChain {
                 stats.size_read as f64 / (1e6 * stats.indexed_blocks as f64),
                 stats.size_read as f64 / (1e6 * stats.elapsed.as_secs_f64()),
             );
+            self.store.flush()?;
         } else {
             // Start autocompactions when there are no new indexed blocks
             self.store.start_compactions()?;
@@ -347,6 +350,10 @@ impl IndexedChain {
         Ok(self
             .client
             .get_block_part(location.indexed_header.hash(), pos)?)
+    }
+
+    pub fn tweaks(&self) -> db::TweakScan<'_> {
+        self.store.tweak_scan()
     }
 
     pub fn headers(&self) -> &headers::Headers {
