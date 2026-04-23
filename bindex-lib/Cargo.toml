@@ -13,6 +13,7 @@ readme = "../README.md"
 
 [features]
 cache = ["dep:rusqlite"]
+bitcoin_serde = ["bitcoin/serde"]
 
 [dependencies]
 bitcoin = { version = "0.32", default-features = false }
