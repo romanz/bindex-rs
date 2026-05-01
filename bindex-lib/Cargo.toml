@@ -23,6 +23,8 @@ thiserror = "2.0"
 ureq = { version = "3", default-features = false }
 rayon = "1.12"
 rusqlite = { version = "0.37", optional = true }
+
+# Current Debian stable is using RocksDB 9.10.0 (https://packages.debian.org/trixie/librocksdb-dev)
 rust-rocksdb = { version = "0.36.0", default-features = false, features = ["zstd"] }
 
 [dev-dependencies]
