@@ -252,7 +252,6 @@ impl DB {
         TweakScan {
             iter,
             prev_prefix: None,
-            tweaks: vec![],
         }
     }
 }
@@ -260,11 +259,10 @@ impl DB {
 pub struct TweakScan<'a> {
     iter: rocksdb::DBIterator<'a>,
     prev_prefix: Option<Prefix>,
-    tweaks: Vec<index::TxTweakRow>,
 }
 
 impl<'a> TweakScan<'a> {
-    pub fn scan(&mut self, txid: &bitcoin::Txid) -> Result<&[index::TxTweakRow], rocksdb::Error> {
+    pub fn scan(&mut self, txid: &bitcoin::Txid) -> Result<Vec<index::TxTweakRow>, rocksdb::Error> {
         let prefix: index::Prefix = txid.to_raw_hash().into();
         assert!(self.prev_prefix.is_none_or(|prev| prev < prefix));
         self.prev_prefix = Some(prefix);
@@ -273,14 +271,14 @@ impl<'a> TweakScan<'a> {
             prefix.as_bytes(),
             rocksdb::Direction::Forward,
         ));
-        self.tweaks.clear();
+        let mut tweaks = vec![];
         for kv in self.iter.by_ref() {
             let row = index::TxTweakRow::deserialize(kv?.0[..].try_into().unwrap());
             if prefix != row.prefix() {
                 break;
             }
-            self.tweaks.push(row);
+            tweaks.push(row);
         }
-        Ok(&self.tweaks)
+        Ok(tweaks)
     }
 }
