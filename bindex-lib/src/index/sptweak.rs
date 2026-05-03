@@ -54,13 +54,6 @@ impl<'a> PerInput<'a> {
             pubkey,
         }
     }
-
-    fn combine(self, other: PerInput<'a>) -> Result<Self, SpError> {
-        Ok(PerInput {
-            outpoint: self.outpoint.min(other.outpoint),
-            pubkey: self.pubkey.combine(&other.pubkey)?,
-        })
-    }
 }
 
 pub struct Context(Secp256k1<VerifyOnly>);
@@ -89,39 +82,38 @@ impl Context {
             assert_eq!(tx.input.len(), txouts_spent.len());
             // let per_input_entries = tx.input.into_iter().zip(txouts_spent.into_iter());
             // Iterate through each input of the transaction and collect its eligible pubkey:
-            let per_input_entries =
-                tx.input
-                    .iter()
-                    .zip(txouts_spent.into_iter())
-                    .filter_map(|(txin, spent_txout)| {
-                        get_pubkey_from_input(txin, spent_txout).transpose()
-                    });
-
-            // Reduce into (smallest_outpoint, A_sum) pair:
-            let total = match per_input_entries.into_iter().reduce(|a, b| a?.combine(b?)) {
-                Some(Ok(total)) => total,
-                Some(Err(err)) => {
-                    log::warn!("skipping {}: {}", tx.compute_txid(), err);
-                    continue;
-                }
-                None => continue,
-            };
-            // Calculate the tweak data based on the public keys and outpoints
-            let tweak = self.compute_tweak(total);
-            let txid = tx.compute_txid();
-            result
-                .rows
-                .push(TxTweakRow::new(txid.to_raw_hash().into(), &tweak));
+            match tx
+                .input
+                .iter()
+                .zip(txouts_spent.into_iter())
+                .filter_map(|(txin, spent_txout)| {
+                    get_pubkey_from_input(txin, spent_txout).transpose()
+                })
+                .collect::<Result<Vec<_>, SpError>>()
+                .and_then(|entries| {
+                    // Combine into (smallest_outpoint, A_sum) pair:
+                    let Some(min_outpoint) = entries.iter().map(|e| e.outpoint).min() else {
+                        return Ok(None); // skip tx if there are no eligible inputs
+                    };
+                    // PublicKey validity is checked after combination is over.
+                    let sum_pubkeys = PublicKey::combine_keys(
+                        &entries.iter().map(|e| &e.pubkey).collect::<Vec<_>>(),
+                    )?;
+                    // Calculate the tweak data based on the public keys and outpoints
+                    let tweak = self.compute_tweak(min_outpoint, sum_pubkeys);
+                    let txid = tx.compute_txid().to_raw_hash().into();
+                    Ok(Some(TxTweakRow::new(txid, &tweak)))
+                }) {
+                Ok(Some(row)) => result.rows.push(row),
+                Ok(None) => (), // skip tx
+                Err(err) => log::warn!("invalid tweak for {}: {}", tx.compute_txid(), err),
+            }
         }
         Ok(result)
     }
 
-    fn compute_tweak(&self, total: PerInput) -> PublicKey {
-        let PerInput {
-            outpoint: smallest_outpoint,
-            pubkey: sum_pubkeys,
-        } = total;
-        let input_hash = InputsHash::new(smallest_outpoint, sum_pubkeys).to_scalar();
+    fn compute_tweak(&self, min_outpoint: &OutPoint, sum_pubkeys: PublicKey) -> PublicKey {
+        let input_hash = InputsHash::new(min_outpoint, sum_pubkeys).to_scalar();
         sum_pubkeys
             .mul_tweak(&self.0, &input_hash)
             .expect("`mul_tweak()` failed")
