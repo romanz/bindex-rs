@@ -31,12 +31,34 @@ fn default_opts() -> rocksdb::Options {
     opts
 }
 
+const CONFIG_CF: &str = "config";
+const CONFIG_KEY: &[u8] = b"C";
+
 const HEADERS_CF: &str = "headers";
 const SCRIPT_HASH_CF: &str = "script_hash";
 const TXPOS_CF: &str = "txpos";
 const TXID_CF: &str = "txid";
 
-const COLUMN_FAMILIES: &[&str] = &[HEADERS_CF, TXPOS_CF, TXID_CF, SCRIPT_HASH_CF];
+// Will be used later:
+const SPENDING_CF: &str = "spending";
+
+// Deprecated CFs:
+const FUNDING_CF: &str = "funding"; // used by electrs (before bindex)
+
+const COLUMN_FAMILIES: &[&str] = &[
+    CONFIG_CF,
+    HEADERS_CF,
+    TXPOS_CF,
+    TXID_CF,
+    SCRIPT_HASH_CF,
+    SPENDING_CF,
+    FUNDING_CF,
+];
+
+#[derive(Debug, serde::Deserialize)]
+struct Config {
+    format: u64, // bumped to enforce reindexing
+}
 
 fn cf_descriptors(
     opts: &rocksdb::Options,
@@ -55,6 +77,17 @@ impl DB {
             db,
             compacting: false,
         };
+
+        if let Some(config) = store.get_config()? {
+            const CURRENT: u64 = 1;
+            if config.format < CURRENT {
+                panic!(
+                    "Unsupported DB format ({} < {}) - please reindex!",
+                    config.format, CURRENT
+                );
+            }
+        }
+
         for &cf_name in COLUMN_FAMILIES {
             let cf = store.cf(cf_name);
             let metadata = store.db.get_column_family_metadata_cf(cf);
@@ -66,6 +99,13 @@ impl DB {
             );
         }
         Ok(store)
+    }
+
+    fn get_config(&self) -> Result<Option<Config>, rocksdb::Error> {
+        Ok(self
+            .db
+            .get_cf(self.cf(CONFIG_CF), CONFIG_KEY)?
+            .map(|value| serde_json::from_slice::<Config>(&value).expect("invalid config")))
     }
 
     fn cf(&self, name: &str) -> &rocksdb::ColumnFamily {
