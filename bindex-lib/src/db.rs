@@ -245,17 +245,35 @@ impl DB {
         &self,
         txnum: index::TxNum,
     ) -> Result<index::TxBlockPos, rocksdb::Error> {
-        let cf = self.cf(TXPOS_CF);
+        let mut poses = self.get_tx_block_poses(&[txnum])?;
+        Ok(poses
+            .pop()
+            .expect("get_tx_block_poses should return one position per txnum"))
+    }
 
-        let from_key = txnum.serialize();
-        let mode = rocksdb::IteratorMode::From(&from_key, rocksdb::Direction::Forward);
-        if let Some(kv) = self.db.iterator_cf(cf, mode).next() {
-            let (key, value) = kv?;
-            assert!(from_key[..] <= key[..]);
-            let row = TxBlockPosRow::deserialize(&key, &value);
-            return Ok(row.get_tx_block_pos(txnum));
+    /// Positions for ascending `txnums`: one forward iterator serves the
+    /// whole batch, and a row is deserialized once for all the txnums it
+    /// covers (a fresh iterator + seek per lookup dominates otherwise).
+    pub fn get_tx_block_poses(
+        &self,
+        txnums: &[index::TxNum],
+    ) -> Result<Vec<index::TxBlockPos>, rocksdb::Error> {
+        let cf = self.cf(TXPOS_CF);
+        let mut iter = self.db.raw_iterator_cf(cf);
+        let mut row: Option<TxBlockPosRow> = None;
+        let mut result = Vec::with_capacity(txnums.len());
+        for &txnum in txnums {
+            if !row.as_ref().is_some_and(|row| row.contains(txnum)) {
+                iter.seek(txnum.serialize());
+                iter.status()?;
+                let kv = iter.key().zip(iter.value());
+                let (key, value) = kv.unwrap_or_else(|| panic!("Missing {:?}", txnum));
+                row = Some(TxBlockPosRow::deserialize(key, value));
+            }
+            let row = row.as_ref().expect("row should be set by the seek above");
+            result.push(row.get_tx_block_pos(txnum));
         }
-        panic!("Missing {:?}", txnum)
+        Ok(result)
     }
 
     /// Load all headers from DB.

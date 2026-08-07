@@ -134,6 +134,13 @@ impl TxBlockPosRow {
             .collect()
     }
 
+    /// Whether `txnum`'s position is stored in this row.
+    pub fn contains(&self, txnum: TxNum) -> bool {
+        self.last_txnum
+            .offset_from(txnum)
+            .is_some_and(|delta| (delta as usize) < self.offsets.0.len() - 1)
+    }
+
     pub fn get_tx_block_pos(&self, txnum: TxNum) -> TxBlockPos {
         let last_index = self.offsets.0.len().checked_sub(1).expect("empty Offsets");
         let delta_from_last = self.last_txnum.offset_from(txnum).expect("TxNum too large") as usize;

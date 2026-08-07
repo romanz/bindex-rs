@@ -12,7 +12,7 @@ mod index;
 
 pub use chain::IndexedChain;
 pub use headers::Headers;
-pub use index::ScriptHash;
+pub use index::{IndexedHeader, ScriptHash};
 
 #[derive(PartialEq, Eq, PartialOrd, Clone, Copy, Debug)]
 pub struct Location<'a> {

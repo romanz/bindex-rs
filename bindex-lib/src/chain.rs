@@ -32,6 +32,77 @@ pub enum Error {
 
     #[error("block not found: {0}")]
     BlockNotFound(#[from] headers::Reorg),
+
+    #[error("thread pool failed: {0}")]
+    ThreadPool(#[from] rayon::ThreadPoolBuildError),
+}
+
+/// Concurrent REST fetches are IO-bound: size the pool to bitcoind's HTTP
+/// worker-thread count rather than this process' CPU quota.
+const FETCH_THREADS: usize = 16;
+
+/// Merging nearby same-block transactions into one blockpart request pays
+/// while the bytes between them cost less to transfer than a request
+/// round-trip (~0.5ms ≈ ~100KB at the measured ~200MB/s per stream);
+/// split spans at gaps clearly above that.
+const COALESCE_GAP_LIMIT: u32 = 256 * 1024;
+
+/// One blockpart request covering a run of nearby transactions of a single
+/// block; items record each transaction's result index and span-relative
+/// position.
+struct FetchSpan {
+    hash: BlockHash,
+    pos: index::TxBlockPos,
+    items: Vec<(usize, index::TxBlockPos)>,
+}
+
+impl FetchSpan {
+    fn new(hash: BlockHash, index: usize, pos: index::TxBlockPos) -> Self {
+        Self {
+            hash,
+            pos,
+            items: vec![(
+                index,
+                index::TxBlockPos {
+                    offset: 0,
+                    size: pos.size,
+                },
+            )],
+        }
+    }
+
+    /// Extend with a nearby following transaction of the same block;
+    /// returns false when it belongs in a new span.
+    fn try_extend(&mut self, hash: BlockHash, index: usize, pos: index::TxBlockPos) -> bool {
+        let end = self.pos.offset + self.pos.size;
+        if hash != self.hash || pos.offset < end || pos.offset - end > COALESCE_GAP_LIMIT {
+            return false;
+        }
+        let offset = pos.offset - self.pos.offset;
+        self.pos.size = offset + pos.size;
+        self.items.push((
+            index,
+            index::TxBlockPos {
+                offset,
+                size: pos.size,
+            },
+        ));
+        true
+    }
+
+    /// Fetch the span and slice out each transaction with its result index.
+    fn fetch(&self, client: &client::Client) -> Result<Vec<(usize, Vec<u8>)>, Error> {
+        let bytes = client.get_block_part(self.hash, self.pos)?;
+        assert_eq!(bytes.len(), self.pos.size as usize);
+        Ok(self
+            .items
+            .iter()
+            .map(|&(index, pos)| {
+                let begin = pos.offset as usize;
+                (index, bytes[begin..begin + pos.size as usize].to_vec())
+            })
+            .collect())
+    }
 }
 
 #[derive(Debug)]
@@ -58,6 +129,7 @@ pub struct IndexedChain {
     headers: headers::Headers,
     client: client::Client,
     store: db::DB,
+    fetch_pool: rayon::ThreadPool,
 }
 
 #[derive(Debug)]
@@ -155,6 +227,10 @@ impl IndexedChain {
         let agent = ureq::Agent::new_with_config(
             ureq::config::Config::builder()
                 .max_response_header_size(usize::MAX) // Disabled as a workaround
+                // keep a warm connection per fetch thread (the defaults would
+                // drop most of them between concurrent bursts)
+                .max_idle_connections(FETCH_THREADS)
+                .max_idle_connections_per_host(FETCH_THREADS)
                 .build(),
         );
         let client = client::Client::new(agent, config.url);
@@ -192,11 +268,16 @@ impl IndexedChain {
                 headers.tip_height().unwrap(),
             );
         }
+        let fetch_pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(FETCH_THREADS)
+            .thread_name(|i| format!("fetch{}", i))
+            .build()?;
         Ok(IndexedChain {
             genesis_hash,
             headers,
             client,
             store,
+            fetch_pool,
         })
     }
 
@@ -354,6 +435,61 @@ impl IndexedChain {
             .get_block_part(location.indexed_header.hash(), pos)?)
     }
 
+    /// Group locations into blockpart spans, one per run of nearby
+    /// same-block transactions (locations arrive in txnum order, so those
+    /// are consecutive with ascending offsets).
+    fn coalesce_spans(&self, locations: &[Location]) -> Result<Vec<FetchSpan>, Error> {
+        use rayon::prelude::*;
+
+        // Concurrent batched position lookups: per-transaction lookups cost
+        // an iterator + seek each, which dominates whale-sized fetches;
+        // batches share one iterator and reuse each row for all the nearby
+        // transactions it covers.
+        const LOOKUP_BATCH: usize = 64;
+        let batches: Vec<Vec<index::TxBlockPos>> = self.fetch_pool.install(|| {
+            locations
+                .par_chunks(LOOKUP_BATCH)
+                .map(|batch| {
+                    let txnums: Vec<_> = batch.iter().map(|location| location.txnum).collect();
+                    self.store.get_tx_block_poses(&txnums)
+                })
+                .collect::<Result<_, _>>()
+        })?;
+        let positions: Vec<index::TxBlockPos> = batches.into_iter().flatten().collect();
+
+        let mut spans: Vec<FetchSpan> = Vec::new();
+        for (index, (location, &pos)) in locations.iter().zip(&positions).enumerate() {
+            let hash = location.indexed_header.hash();
+            let extended = spans
+                .last_mut()
+                .is_some_and(|span| span.try_extend(hash, index, pos));
+            if !extended {
+                spans.push(FetchSpan::new(hash, index, pos));
+            }
+        }
+        Ok(spans)
+    }
+
+    /// Fetch multiple transactions' bytes from bitcoind concurrently,
+    /// coalescing nearby same-block transactions into single blockpart
+    /// requests. Results are returned in the input locations' order.
+    pub fn get_txs_bytes(&self, locations: &[Location]) -> Result<Vec<Vec<u8>>, Error> {
+        use rayon::prelude::*;
+
+        let spans = self.coalesce_spans(locations)?;
+        let fetched = self.fetch_pool.install(|| {
+            spans
+                .par_iter()
+                .map(|span| span.fetch(&self.client))
+                .collect::<Result<Vec<_>, Error>>()
+        })?;
+        let mut result = vec![Vec::new(); locations.len()];
+        for (index, bytes) in fetched.into_iter().flatten() {
+            result[index] = bytes;
+        }
+        Ok(result)
+    }
+
     pub fn headers(&self) -> &headers::Headers {
         &self.headers
     }
@@ -468,6 +604,14 @@ mod tests {
             .unwrap()
             .collect();
         assert_eq!(locations, vec![loc2]);
+
+        // bulk fetch matches per-location fetch (nearby same-block
+        // transactions — e.g. tx1 & tx2 above — coalesce into one request)
+        let bulk = chain.get_txs_bytes(&txs).unwrap();
+        assert_eq!(bulk.len(), txs.len());
+        for (location, bytes) in txs.iter().zip(&bulk) {
+            assert_eq!(bytes, &chain.get_tx_bytes(location).unwrap());
+        }
 
         // check reorg
         let old_tip = get_tip();
