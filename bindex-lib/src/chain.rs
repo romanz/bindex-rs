@@ -58,6 +58,7 @@ pub struct IndexedChain {
     headers: headers::Headers,
     client: client::Client,
     store: db::DB,
+    chunk_size: usize,
 }
 
 #[derive(Debug)]
@@ -152,9 +153,12 @@ impl IndexedChain {
 
     fn from_config(config: Config) -> Result<Self, Error> {
         info!("index: {:?}", config);
+        let chunk_size = rayon::current_num_threads();
         let agent = ureq::Agent::new_with_config(
             ureq::config::Config::builder()
                 .max_response_header_size(usize::MAX) // Disabled as a workaround
+                .max_idle_connections_per_host(chunk_size)
+                .max_idle_connections(chunk_size)
                 .build(),
         );
         let client = client::Client::new(agent, config.url);
@@ -197,6 +201,7 @@ impl IndexedChain {
             headers,
             client,
             store,
+            chunk_size,
         })
     }
 
@@ -257,7 +262,7 @@ impl IndexedChain {
         use rayon::prelude::*;
 
         let mut batches = Vec::with_capacity(headers.len());
-        for chunk in headers.chunks(10) {
+        for chunk in headers.chunks(self.chunk_size) {
             let items: Vec<_> = chunk
                 .par_iter()
                 .map(|header| self.fetch_data(header.block_hash()))
