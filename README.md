@@ -5,7 +5,7 @@
 
 See [slides](https://docs.google.com/presentation/d/1Zez-6DApKRu59kke4i_g9jwxQlaFKKRpOPdYFYsFXfA/) for more details.
 
-Bitcoin Core 31 is required for efficient indexing and querying.
+Bitcoin Core 31+ is required for efficient indexing and querying.
 
 ## Usage
 
