@@ -12,8 +12,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   DEBIAN_FRONTEND: noninteractive
-  BITCOIND_URL: https://bitcoincore.org/bin/bitcoin-core-31.0
-  BITCOIND_VER: bitcoin-31.0
+  BITCOIND_URL: https://bitcoincore.org/bin/bitcoin-core-32.1
+  BITCOIND_VER: bitcoin-32.1
 
 jobs:
   ubuntu_noble:
