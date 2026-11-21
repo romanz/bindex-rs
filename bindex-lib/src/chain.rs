@@ -437,7 +437,7 @@ mod tests {
             .transaction()
             .unwrap();
         node.client.generate_to_address(1, &addr).unwrap();
-        assert_eq!(node.client.get_mempool_info().unwrap().size, 0);
+        assert!(node.client.get_raw_mempool().unwrap().0.is_empty());
 
         let stats = chain.sync(1000).unwrap();
         assert_eq!(stats.indexed_blocks, 1);
